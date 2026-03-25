@@ -617,6 +617,8 @@
 
         .file-input-wrapper {
             display: flex;
+            flex-direction: column;
+            gap: 8px;
             justify-content: center;
         }
 
@@ -624,8 +626,8 @@
             display: none;
         }
 
-        /* ファイル追加ボタン (シンプルに) */
-        .file-input-wrapper label {
+        /* ファイル追加・フォルダ参照ボタン (シンプルに) */
+        .file-input-wrapper label, .btn-folder {
             background: rgba(255,255,255,0.03);
             border: 1px dashed rgba(255,255,255,0.2);
             padding: 12px 0;
@@ -643,14 +645,14 @@
             gap: 6px;
         }
 
-        .file-input-wrapper label:hover {
+        .file-input-wrapper label:hover, .btn-folder:hover {
             color: var(--accent);
             border-color: rgba(255,255,255,0.5);
             background: rgba(255,255,255,0.08);
             box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         }
         
-        .file-input-wrapper label .material-symbols-rounded {
+        .file-input-wrapper label .material-symbols-rounded, .btn-folder .material-symbols-rounded {
             font-size: 18px;
         }
 
@@ -1006,6 +1008,11 @@
                     <span class="material-symbols-rounded">add</span>
                     Add Local Files
                 </label>
+                <!-- Electronのみ表示されるフォルダ参照ボタン -->
+                <button class="btn-folder" id="btn-select-folder" style="display: none; border-style: solid;">
+                    <span class="material-symbols-rounded">folder_open</span>
+                    Select Music Folder
+                </button>
             </div>
             <ul class="playlist" id="playlist">
                 <!-- 曲一覧がJavaScriptで追加されます -->
@@ -1062,7 +1069,12 @@
         let isMiniMode = false;
         let isAlwaysOnTop = false;
         
+        const btnSelectFolder = document.getElementById('btn-select-folder');
+
         if (window.electronAPI) {
+            // Electron機能を利用可能な場合、ボタンを表示
+            if (btnSelectFolder) btnSelectFolder.style.display = 'flex';
+            
             btnMinimize.addEventListener('click', () => window.electronAPI.minimize());
             btnClose.addEventListener('click', () => window.electronAPI.close());
             
@@ -1098,6 +1110,30 @@
                 // モード切替時にキャンバスのサイズもリサイズ
                 setTimeout(resize, 50);
             });
+
+            // ===================================
+            // 追加：フォルダ記憶機能の組み込み
+            // ===================================
+            btnSelectFolder.addEventListener('click', async () => {
+                const files = await window.electronAPI.selectFolder();
+                if (files && files.length > 0) {
+                    playlistFiles = files;
+                    currentTrackIndex = -1;
+                    renderPlaylist();
+                    loadTrack(0);
+                    setTimeout(() => audio.play().catch(console.error), 100);
+                }
+            });
+
+            // 起動時に保存されたフォルダがあれば読み込む
+            window.electronAPI.getSavedFolder().then(files => {
+                if (files && files.length > 0) {
+                    playlistFiles = files;
+                    renderPlaylist();
+                    loadTrack(0);
+                }
+            });
+
         } else {
             // ブラウザ環境ではウィンドウコントロールを非表示にする
             const controls = document.querySelector('.window-controls');
@@ -1191,35 +1227,46 @@
             
             // 左右のパン（広がり・位置）を制御するノード
             pannerNode = audioCtx.createStereoPanner();
-            pannerNode.pan.value = 0;
             
             // 距離感（奥行き）を表現するためのローパスフィルター
-            // 高音を少し削ることで遠くからの音に聞こえる効果を狙う
             filterNode = audioCtx.createBiquadFilter();
             filterNode.type = 'lowpass';
-            filterNode.frequency.value = 24000; // 初期値はスルー(人間の可聴域以上)
             
             // 微妙な音量減衰で距離感を出すためのゲインノード
             gainNode = audioCtx.createGain();
-            gainNode.gain.value = 1.0;
 
-            // 接続: source -> filter -> panner -> gain -> destination(スピーカー)
-            sourceNode.connect(filterNode);
-            filterNode.connect(pannerNode);
-            pannerNode.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
+            // Web Audio初期化段階では、is3DEnabledがフラグに準じて接続を決定する
+            // 呼び出し後に update3DState() が実行される想定のため、ここでは何もしないかそのまま繋ぐ
+            sourceNode.connect(audioCtx.destination); // 初期状態はTrue Bypass
         }
 
         function update3DState() {
+            if (!audioCtx) return;
+            
             // Contextがsuspend状態から復帰させる
-            if (audioCtx && audioCtx.state === 'suspended') {
+            if (audioCtx.state === 'suspended') {
                 audioCtx.resume();
             }
 
+            // 一度Sourceからの接続を全て切断（True Bypassの準備）
+            sourceNode.disconnect();
+            const now = audioCtx.currentTime;
+
             if (is3DEnabled) {
-                // 3D効果ON：距離感を出すために軽く高音を削り、少し音量を下げる
-                filterNode.frequency.setTargetAtTime(8000, audioCtx.currentTime, 0.5); 
-                gainNode.gain.setTargetAtTime(0.95, audioCtx.currentTime, 0.5);
+                // 3D効果ON：ノードを直列に繋ぎ直す
+                sourceNode.connect(filterNode);
+                filterNode.connect(pannerNode);
+                pannerNode.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+
+                // パラメータのアニメーション予約をキャンセルして適用
+                filterNode.frequency.cancelScheduledValues(now);
+                gainNode.gain.cancelScheduledValues(now);
+                pannerNode.pan.cancelScheduledValues(now);
+
+                // 距離感を出すために軽く高音を削り、少し音量を下げる
+                filterNode.frequency.setTargetAtTime(8000, now, 0.1); 
+                gainNode.gain.setTargetAtTime(0.95, now, 0.1);
                 
                 sliderPan.disabled = isAutoPan; // オートパン時は手動スライダーをロック
                 toggleAutoPan.disabled = false;
@@ -1228,15 +1275,12 @@
                     startAutoPan();
                 } else {
                     stopAutoPan();
-                    pannerNode.pan.setTargetAtTime(parseFloat(sliderPan.value), audioCtx.currentTime, 0.1);
+                    pannerNode.pan.setTargetAtTime(parseFloat(sliderPan.value), now, 0.05);
                 }
             } else {
-                // 3D効果OFF：バイパス状態（そのままの音源）に戻す
-                if (filterNode) {
-                    filterNode.frequency.setTargetAtTime(24000, audioCtx.currentTime, 0.5);
-                    gainNode.gain.setTargetAtTime(1.0, audioCtx.currentTime, 0.5);
-                    pannerNode.pan.setTargetAtTime(0, audioCtx.currentTime, 0.5);
-                }
+                // 3D効果OFF：完全なバイパス状態（エフェクトを通さずにDestinationへ直結）
+                sourceNode.connect(audioCtx.destination);
+                
                 sliderPan.disabled = true;
                 toggleAutoPan.disabled = true;
                 stopAutoPan();
@@ -1400,7 +1444,12 @@
             currentTrackIndex = index;
             const file = playlistFiles[index];
             
-            audio.src = URL.createObjectURL(file);
+            if (file.isElectronFile) {
+                // Electron経由での絶対パス再生物理ファイル（URLエンコード処置）
+                audio.src = 'file:///' + encodeURI(file.path.replace(/\\/g, '/')).replace(/#/g, '%23').replace(/\?/g, '%3F');
+            } else {
+                audio.src = URL.createObjectURL(file);
+            }
             
             trackNameEl.textContent = file.name.replace(/\.[^/.]+$/, "");
             artistNameEl.textContent = "Unknown Artist";
@@ -1415,7 +1464,8 @@
             // デフォルト情報でMedia Sessionを初期化
             updateMediaSessionMetadata(trackNameEl.textContent, "Unknown Artist", "", null);
             
-            if (window.jsmediatags) {
+            // isElectronFile の場合は、jsmediatagsのファイルシステム外アクセス制限(CORS等)を回避するためID3読み込みをスキップする
+            if (window.jsmediatags && !file.isElectronFile) {
                 window.jsmediatags.read(file, {
                     onSuccess: function(tag) {
                         const tags = tag.tags;

@@ -4,8 +4,9 @@
 // このファイルがElectronアプリのエントリーポイントです。
 // ウィンドウの作成・設定・イベント管理を行います。
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 // =========================================================
 // メインウィンドウの作成
@@ -85,6 +86,72 @@ app.whenReady().then(() => {
     ipcMain.on('window-close', (event) => {
         const win = BrowserWindow.fromWebContents(event.sender);
         if (win) win.close();
+    });
+
+    // =========================================================
+    // フォルダ記憶・読み込み機能
+    // =========================================================
+    const configPath = path.join(app.getPath('userData'), 'music-folder-config.json');
+
+    // 再帰・または単一ディレクトリ内の音楽ファイルを検索
+    function getAudioFilesFromDir(dirPath) {
+        try {
+            const files = fs.readdirSync(dirPath);
+            const audioFiles = [];
+            
+            for (const file of files) {
+                const fullPath = path.join(dirPath, file);
+                try {
+                    const stat = fs.statSync(fullPath);
+                    if (stat.isFile() && file.match(/\.(mp3|wav|ogg|flac|m4a)$/i)) {
+                        audioFiles.push({
+                            name: file,
+                            path: fullPath,
+                            isElectronFile: true
+                        });
+                    }
+                } catch(e) { /* ignore read errors for specific files */ }
+            }
+            return audioFiles;
+        } catch(e) {
+            return [];
+        }
+    }
+
+    // [機能] フォルダを選択して記憶し、ファイルリストを返す
+    ipcMain.handle('select-folder', async (event) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        const result = await dialog.showOpenDialog(win, {
+            title: '音楽フォルダを選択',
+            properties: ['openDirectory']
+        });
+
+        if (result.canceled || result.filePaths.length === 0) {
+            return null;
+        }
+
+        const selectedFolder = result.filePaths[0];
+        
+        // フォルダパスを保存
+        fs.writeFileSync(configPath, JSON.stringify({ folder: selectedFolder }));
+        
+        return getAudioFilesFromDir(selectedFolder);
+    });
+
+    // [機能] 起動時に保存されたフォルダからファイルリストを読み込んで返す
+    ipcMain.handle('get-saved-folder', async () => {
+        try {
+            if (fs.existsSync(configPath)) {
+                const configData = fs.readFileSync(configPath, 'utf8');
+                const config = JSON.parse(configData);
+                if (config && config.folder && fs.existsSync(config.folder)) {
+                    return getAudioFilesFromDir(config.folder);
+                }
+            }
+        } catch (e) {
+            console.error("Failed to read saved folder:", e);
+        }
+        return null;
     });
 });
 

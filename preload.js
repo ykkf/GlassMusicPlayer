@@ -19,5 +19,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // ミニモードの切り替え
     toggleMiniMode: (isMini) => ipcRenderer.send('toggle-mini-mode', isMini),
     // 常に手前に表示の切り替え
-    toggleAlwaysOnTop: (isAlwaysOnTop) => ipcRenderer.send('toggle-always-on-top', isAlwaysOnTop)
+    toggleAlwaysOnTop: (isAlwaysOnTop) => ipcRenderer.send('toggle-always-on-top', isAlwaysOnTop),
+    
+    // フォルダ参照記憶機能
+    selectFolder: () => ipcRenderer.invoke('select-folder'),
+    getSavedFolder: () => ipcRenderer.invoke('get-saved-folder')
 });
