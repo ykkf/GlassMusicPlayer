@@ -1003,6 +1003,13 @@
         // =========================================================
         // イベントリスナーの登録
         // =========================================================
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.setActionHandler('play', togglePlay);
+            navigator.mediaSession.setActionHandler('pause', togglePlay);
+            navigator.mediaSession.setActionHandler('previoustrack', playPrev);
+            navigator.mediaSession.setActionHandler('nexttrack', playNext);
+        }
+
         fileInput.addEventListener('change', handleFiles);
         playBtn.addEventListener('click', togglePlay);
         prevBtn.addEventListener('click', playPrev);
@@ -1114,6 +1121,25 @@
         }
 
         /**
+         * Media Session API を用いてスマホ等のロック画面・通知領域向けのメタデータを更新
+         */
+        function updateMediaSessionMetadata(title, artist, album, artworkUrl) {
+            if ('mediaSession' in navigator) {
+                const metadataParams = {
+                    title: title || 'Unknown Track',
+                    artist: artist || '',
+                    album: album || ''
+                };
+                if (artworkUrl) {
+                    metadataParams.artwork = [
+                        { src: artworkUrl, sizes: '512x512', type: 'image/jpeg' } // 表示用のサムネイル指定
+                    ];
+                }
+                navigator.mediaSession.metadata = new window.MediaMetadata(metadataParams);
+            }
+        }
+
+        /**
          * 3. 曲の読み込み
          */
         function loadTrack(index) {
@@ -1133,6 +1159,9 @@
             // シークバー初期化
             seekBar.value = 0;
             updateSliderBackground(seekBar, 0);
+
+            // デフォルト情報でMedia Sessionを初期化
+            updateMediaSessionMetadata(trackNameEl.textContent, "Unknown Artist", "", null);
             
             if (window.jsmediatags) {
                 window.jsmediatags.read(file, {
@@ -1146,19 +1175,28 @@
                         trackNameEl.title = trackNameEl.textContent;
                         artistNameEl.title = artistNameEl.textContent;
                         
+                        let artworkUrl = null;
                         if (tags.picture) {
                             const { data, format } = tags.picture;
                             const byteArray = new Uint8Array(data);
                             const blob = new Blob([byteArray], { type: format });
-                            const url = URL.createObjectURL(blob);
+                            artworkUrl = URL.createObjectURL(blob);
                             
                             albumArtEl.onload = () => {
                                 albumArtEl.style.display = 'block';
                                 setTimeout(() => albumArtEl.style.opacity = '1', 50); // フェードイン
                                 albumPlaceholder.style.display = 'none';
                             };
-                            albumArtEl.src = url;
+                            albumArtEl.src = artworkUrl;
                         }
+
+                        // ID3タグから読み込んだ正確な情報でMedia Sessionを更新
+                        updateMediaSessionMetadata(
+                            tags.title || trackNameEl.textContent,
+                            tags.artist || "Unknown Artist",
+                            tags.album || "",
+                            artworkUrl
+                        );
                     },
                     onError: function(error) {}
                 });
