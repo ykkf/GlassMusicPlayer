@@ -1,0 +1,20 @@
+{
+  "name": "glass-music-player",
+  "version": "1.0.0",
+  "description": "ガラス風デザインの音楽プレイヤー デスクトップアプリ",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-packager . \"Glass Music Player\" --platform=win32 --arch=x64 --out=dist --overwrite"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^26.8.1",
+    "electron-packager": "^17.1.2"
+  },
+  "dependencies": {
+    "jsmediatags": "^3.9.5"
+  },
+  "author": "",
+  "license": "MIT"
+}

@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glass Music Player</title>
+    
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <!-- Google Material Symbols (アイコン用) -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@48,300,0,0" rel="stylesheet">
+    
+    <!-- PWA用 Metaタグ -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#060913">
+    <link rel="apple-touch-icon" href="icon.png">
+
+    <!-- Service Worker 登録 -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js').catch(err => console.log('SW registration failed: ', err));
+            });
+        }
+    </script>
+    <!-- jsmediatags (MP3のID3タグ/アルバムアート読み込み用) -->
+    <!-- Electron環境ではnode_modulesから読み込み、ブラウザではCDNから読み込み -->
+    <script>
+        try {
+            // Electron環境：node_modulesからロード
+            if (typeof require !== 'undefined') {
+                window.jsmediatags = require('jsmediatags');
+            }
+        } catch(e) {
+            // ブラウザ環境: 何もしない（CDNフォールバックを後で読み込む）
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js" defer></script>
+    
+    <style>
+        /* =========================================================
+           変数定義・全体設定
+           ========================================================= */
+        :root {
+            --glass-bg: rgba(20, 25, 30, 0.45); /* より暗く高級感のあるガラス背景 */
+            --glass-border: rgba(255, 255, 255, 0.12); /* 極細の白いボーダー */
+            --glass-highlight: rgba(255, 255, 255, 0.05); /* 控えめな光沢 */
+            --text-primary: #ffffff; /* メインテキスト */
+            --text-secondary: rgba(255, 255, 255, 0.55); /* サブテキスト */
+            --accent: #00e5ff; /* ワンポイントのシアン */
+            --accent-glow: rgba(0, 229, 255, 0.3); /* シアンの控えめな発光 */
+            --track-bg: rgba(255, 255, 255, 0.1); /* 未再生部分は薄く */
+            --bg-gradient-1: #060913;
+            --bg-gradient-2: #12182b;
+            --bg-gradient-3: #0c1524;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none; /* テキスト選択を無効化 */
+        }
+
+        /* 背景（Electronでは透明、ブラウザではグラデーション） */
+        body {
+            font-family: 'Inter', sans-serif;
+            color: var(--text-primary);
+            background: transparent; /* Electronの透明ウィンドウを活かす */
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            font-weight: 400;
+        }
+
+        /* カード内部のガラス背景層（backdrop-filterの代わりに実物の背景を提供） */
+        .glass-bg-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(145deg,
+                rgba(15, 20, 35, 0.92),
+                rgba(10, 15, 30, 0.88) 40%,
+                rgba(8, 18, 38, 0.90) 70%,
+                rgba(12, 22, 40, 0.92)
+            );
+            border-radius: 28px;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* カードのガラス光沢オーバーレイ（上部の反射光） */
+        .glass-highlight-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(180deg,
+                rgba(255, 255, 255, 0.08) 0%,
+                rgba(255, 255, 255, 0.02) 40%,
+                transparent 100%
+            );
+            border-radius: 28px 28px 0 0;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        /* プレイヤーカード内の波形キャンバス */
+        #bg-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            opacity: 0.35; /* カード内なので少し見えるように */
+            pointer-events: none; /* クリックの影響を受けない */
+            border-radius: 28px; /* カードの角丸に合わせる */
+        }
+
+        /* =========================================================
+           Electron用 ドラッグバー領域
+           ========================================================= */
+        .titlebar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            -webkit-app-region: drag; /* Electronでドラッグ可能にする */
+            z-index: 1000;
+            background: transparent;
+        }
+
+        .titlebar .title {
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            opacity: 0.4;
+            transition: opacity 0.4s ease;
+        }
+        
+        .titlebar:hover .title {
+            opacity: 1;
+        }
+
+        /* ウィンドウコントロール（最小化・閉じるボタン） */
+        .window-controls {
+            position: absolute;
+            top: 0;
+            right: 0;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            gap: 0;
+            z-index: 1001;
+            -webkit-app-region: no-drag; /* ボタンはドラッグ無効 */
+        }
+
+        .window-controls button {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            width: 44px;
+            height: 36px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 14px;
+            transition: all 0.2s ease;
+            border-radius: 0;
+        }
+
+        .window-controls button:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+        }
+
+        .window-controls button.active {
+            color: var(--accent); /* ピン留め有効時はアクセントカラー */
+        }
+
+        .window-controls .btn-close:hover {
+            background: rgba(232, 17, 35, 0.8); /* 閉じるボタンは赤色 */
+            color: #fff;
+        }
+
+        .window-controls .btn-close {
+            border-radius: 0 28px 0 0; /* カードの右上の角丸に合わせる */
+        }
+
+        /* ミニモード切り替えボタン用 */
+        .window-controls #btn-mini {
+            font-size: 16px; /* アイコンを少し大きく表示できるように */
+        }
+
+        /* ユーザーが操作する要素はドラッグ無効化 */
+        input, button, .playlist-item, label {
+            -webkit-app-region: no-drag;
+        }
+
+        /* =========================================================
+           プレイヤーカード UI (フロストガラス)
+           ========================================================= */
+        .player-card {
+            width: 330px;
+            background: rgba(15, 20, 35, 0.4); /* ガラス感のある半透明 */
+            backdrop-filter: blur(40px) saturate(1.2); /* ブラー効果を強化 */
+            -webkit-backdrop-filter: blur(40px) saturate(1.2);
+            border: 1px solid rgba(255, 255, 255, 0.15); /* 少し明るいボーダー */
+            border-top: 1px solid rgba(255, 255, 255, 0.25); /* 上部ハイライトを強めに */
+            border-radius: 28px;
+            padding: 40px 32px 32px;
+            box-shadow: 
+                0 40px 80px rgba(0, 0, 0, 0.65),
+                0 0 0 1px rgba(255, 255, 255, 0.06), /* 薄い外側ライン */
+                inset 0 1px 0 rgba(255, 255, 255, 0.12), /* 上部のハイライト */
+                inset 0 -1px 0 rgba(0, 0, 0, 0.2), /* 下部の影 */
+                inset 0 0 60px rgba(255, 255, 255, 0.03); /* 内側の微かな光 */
+            display: flex;
+            flex-direction: column;
+            gap: 28px;
+            transition: transform 0.4s cubic-bezier(0.165, 0.84, 0.44, 1),
+                        box-shadow 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+            margin-top: 20px;
+            z-index: 10;
+            position: relative;
+            overflow: hidden;
+            height: 700px;
+        }
+
+        .player-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 
+                0 50px 90px rgba(0, 0, 0, 0.7),
+                0 0 0 1px rgba(255, 255, 255, 0.08),
+                inset 0 1px 0 rgba(255, 255, 255, 0.18),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.2),
+                inset 0 0 60px rgba(255, 255, 255, 0.04);
+        }
+
+        /* =========================================================
+           前面コンテンツの配置設定 (背景層より上に表示する)
+           ========================================================= */
+        .player-card > .album-container,
+        .player-card > .info,
+        .player-card > .progress-wrapper,
+        .player-card > .controls,
+        .player-card > .utils-wrapper,
+        .player-card > .playlist-section {
+            position: relative;
+            z-index: 10;
+        }
+
+        /* =========================================================
+           アルバムアート (大きく強調)
+           ========================================================= */
+        .album-container {
+            width: 250px; 
+            height: 250px;
+            margin: 0 auto;
+            border-radius: 20px; /* 少し大きめのRで柔らかく */
+            overflow: hidden;
+            background: rgba(0, 0, 0, 0.4);
+            box-shadow: 
+                0 25px 50px rgba(0,0,0,0.6), 
+                inset 0 0 0 1px rgba(255,255,255,0.08); /* さりげない枠 */
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: transform 0.5s cubic-bezier(0.165, 0.84, 0.44, 1), box-shadow 0.5s ease;
+        }
+
+        /* 再生時の浮遊感アニメーション */
+        .album-container.playing {
+            transform: scale(1.03) translateY(-5px);
+            box-shadow: 
+                0 35px 60px rgba(0,0,0,0.7),
+                0 15px 40px var(--accent-glow), /* 再生中はアクセントカラーの影 */
+                inset 0 0 0 1px rgba(255,255,255,0.1);
+        }
+
+        .album-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: opacity 0.4s ease;
+        }
+
+        .album-placeholder {
+            position: absolute;
+            color: rgba(255, 255, 255, 0.08);
+            font-size: 80px;
+            font-weight: 300;
+        }
+
+        /* =========================================================
+           曲情報テキスト
+           ========================================================= */
+        .info {
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .info h2 {
+            font-size: 21px;
+            font-weight: 600;
+            letter-spacing: -0.3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: var(--text-primary);
+            text-shadow: 0 2px 10px rgba(0,0,0,0.5); /* 視認性向上のための影 */
+        }
+
+        .info p {
+            font-size: 13px;
+            font-weight: 400;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            letter-spacing: 0.3px;
+        }
+
+        /* =========================================================
+           シークバー・時間
+           ========================================================= */
+        .progress-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .time-wrapper {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            padding: 0 4px; /* バーの幅に合わせる */
+        }
+
+        /* カスタムレンジスライダー (シークバー & 音量共有) */
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+            outline: none;
+            height: 24px; /* タッチ領域確保（少し広げる） */
+            margin: -9px 0; /* 見た目の高さを調整 */
+            cursor: pointer;
+        }
+
+        /* Track のデザイン */
+        input[type="range"]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 3px; /* 高さを4-6pxからさらに薄い3pxへ */
+            background: var(--track-bg); /* JSで上書きされるベース色 */
+            border-radius: 3px;
+            transition: height 0.2s ease, background 0.1s linear;
+        }
+
+        /* Hover 時少しだけ太くする */
+        input[type="range"]:hover::-webkit-slider-runnable-track {
+            height: 4px;
+        }
+
+        /* Thumb (つまみ) のデザイン */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 10px; /* つまみも少し小さめにしてミニマルに */
+            height: 10px;
+            background: var(--text-primary); /* 白くくっきり */
+            border-radius: 50%;
+            margin-top: -3.5px; /* (Track Height 3px / 2) - (Thumb Height 10px / 2) */
+            box-shadow: 0 0 10px rgba(0,0,0,0.5), 0 0 5px var(--accent-glow);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.3s;
+            opacity: 1; /* 見えるようにする */
+            transform: scale(0.6); /* 普段は極小 */
+        }
+
+        input[type="range"]:hover::-webkit-slider-thumb,
+        input[type="range"]:active::-webkit-slider-thumb {
+            transform: scale(1.3); /* ホバーで大きく */
+            background: var(--accent); /* ホバーでアクセント色に光る */
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        /* =========================================================
+           コントロールボタン (再生、次、前)
+           ========================================================= */
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 22px;
+        }
+
+        .btn {
+            background: transparent;
+            border: 1px solid transparent; 
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            border-radius: 50%;
+            width: 46px;
+            height: 46px;
+        }
+
+        .btn:hover {
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.08);
+            transform: scale(1.05); /* 軽く浮く */
+        }
+
+        .btn:active {
+            transform: scale(0.92); /* 押下時に縮む */
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        /* 再生/一時停止ボタン */
+        .btn-main {
+            width: 62px;
+            height: 62px;
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            color: var(--text-primary);
+            box-shadow: 
+                0 10px 25px rgba(0,0,0,0.3),
+                inset 0 1px 0 rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .btn-main:hover {
+            background: rgba(255, 255, 255, 0.25);
+            color: var(--text-primary);
+            border-color: rgba(255, 255, 255, 0.4);
+            box-shadow: 
+                0 15px 30px rgba(0,0,0,0.4), 
+                0 0 20px var(--accent-glow), /* アクセントの光 */
+                inset 0 1px 0 rgba(255,255,255,0.2);
+            transform: scale(1.08); /* メインボタンはさらに大きく */
+        }
+
+        .btn-main:active {
+            transform: scale(0.95);
+        }
+
+        .btn .material-symbols-rounded { font-size: 28px; font-weight: 300; }
+        .btn-main .material-symbols-rounded { font-size: 34px; font-weight: 400; }
+
+        /* =========================================================
+           ユーティリティエリア (音量 & プレイリストボタン)
+           ========================================================= */
+        .utils-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: -6px; 
+            padding-top: 24px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .volume-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+            padding-right: 24px;
+        }
+
+        .volume-wrapper .material-symbols-rounded {
+            font-size: 20px;
+            color: var(--text-secondary);
+            font-weight: 300;
+        }
+        
+        /* プレイリスト表示切り替えトグル（アイコン） */
+        .playlist-toggle {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        }
+        
+        .playlist-toggle:hover {
+            color: var(--text-primary);
+            background: rgba(255,255,255,0.08);
+            transform: scale(1.05);
+        }
+        
+        .playlist-toggle:active {
+            transform: scale(0.9);
+        }
+
+        /* =========================================================
+           プレイリストセクション (折りたたみ式)
+           ========================================================= */
+        .playlist-section {
+            display: none; /* デフォルトは非表示 */
+            flex-direction: column;
+            gap: 16px;
+            padding-top: 8px;
+            animation: fadeIn 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+        }
+        
+        .playlist-section.show {
+            display: flex;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-15px) scale(0.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .file-input-wrapper {
+            display: flex;
+            justify-content: center;
+        }
+
+        .file-input-wrapper input[type="file"] {
+            display: none;
+        }
+
+        /* ファイル追加ボタン (シンプルに) */
+        .file-input-wrapper label {
+            background: rgba(255,255,255,0.03);
+            border: 1px dashed rgba(255,255,255,0.2);
+            padding: 12px 0;
+            width: 100%;
+            text-align: center;
+            border-radius: 14px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .file-input-wrapper label:hover {
+            color: var(--accent);
+            border-color: rgba(255,255,255,0.5);
+            background: rgba(255,255,255,0.08);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        
+        .file-input-wrapper label .material-symbols-rounded {
+            font-size: 18px;
+        }
+
+        .playlist {
+            list-style: none;
+            overflow-y: auto;
+            flex-grow: 1; /* 残りのスペースを埋める */
+            padding-right: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        /* カスタムスクロールバー 極細 */
+        .playlist::-webkit-scrollbar {
+            width: 4px;
+        }
+        .playlist::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .playlist::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.15);
+            border-radius: 4px;
+        }
+        .playlist:hover::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .playlist-item {
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: transparent;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 400;
+            color: var(--text-secondary);
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border: 1px solid transparent;
+        }
+
+        .playlist-item:hover {
+            background: rgba(255,255,255,0.05);
+            color: var(--text-primary);
+        }
+
+        .playlist-item.active {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.08);
+            color: var(--accent); /* 再生中をアクセントカラーで強調 */
+            font-weight: 500;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+
+        .playlist-item .material-symbols-rounded {
+            font-size: 18px;
+            font-weight: 300;
+            opacity: 0.6;
+        }
+        
+        .playlist-item.active .material-symbols-rounded {
+            opacity: 1;
+        }
+
+        /* =========================================================
+           レスポンシブ (スマホ対応)
+           ========================================================= */
+        @media (max-width: 480px) {
+            .player-card {
+                width: 88%;
+                padding: 32px 24px 24px;
+                border-radius: 24px;
+                gap: 22px;
+            }
+            .album-container {
+                width: 210px;
+                height: 210px;
+            }
+            .btn-main {
+                width: 56px;
+                height: 56px;
+            }
+        }
+
+        /* =========================================================
+           ミニモード (高さを抑える)
+           ========================================================= */
+        body.mini-mode .player-card {
+            height: 240px;
+            padding: 40px 32px 20px;
+            gap: 16px;
+            justify-content: flex-start;
+        }
+
+        /* ミニモード時は一部要素のみ非表示 */
+        body.mini-mode .utils-wrapper,
+        body.mini-mode .playlist-section {
+            display: none !important;
+        }
+
+        /* ミニモード時のアルバムアート（薄く背景に表示） */
+        body.mini-mode .album-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            border-radius: 0;
+            z-index: 1; /* canvasより上で、コンテンツより下 */
+            opacity: 0.35; /* 15% -> 35% に上げて視認性をアップ */
+            filter: blur(8px); /* ぼかしを少し弱めて元の画像がわかりやすく */
+            pointer-events: none;
+            box-shadow: none;
+            background: transparent;
+        }
+
+        body.mini-mode .album-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        body.mini-mode .album-placeholder {
+            display: none !important;
+        }
+
+        /* ミニモードで他の要素をアルバム背景より上に表示 */
+        body.mini-mode .info,
+        body.mini-mode .progress-wrapper,
+        body.mini-mode .controls {
+            z-index: 10;
+            position: relative;
+        }
+
+        /* プレイリスト展開時のセクション構造調整（固定高さ用） */
+        .playlist-section {
+            display: none; 
+            flex-direction: column;
+            gap: 16px;
+            padding-top: 8px;
+            overflow: hidden; /* 中身のスクロールをplaylistに任せる */
+            flex: 1; /* カード下部全体を使う */
+            animation: fadeIn 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+        }
+
+        /* 波形の表示領域もカードに合わせて修正 */
+        body.mini-mode #bg-canvas {
+            border-radius: 28px;
+            height: 100%;
+        }
+
+        body.mini-mode .info h2 {
+            font-size: 16px;
+        }
+
+        body.mini-mode .controls {
+            margin-top: -6px;
+        }
+
+        /* =========================================================
+           スマートフォン用レスポンシブデザイン (PWA向け)
+           ========================================================= */
+        @media (max-width: 600px) and (pointer: coarse) {
+            body {
+                background: linear-gradient(135deg, var(--bg-gradient-1), var(--bg-gradient-2), var(--bg-gradient-3));
+                align-items: flex-start; /* 上寄せにする */
+            }
+
+            .player-card {
+                width: 100vw;
+                height: 100vh;
+                margin-top: 0;
+                border-radius: 0;
+                border: none; /* ボーダー不要 */
+                padding: 40px 24px 24px;
+                box-shadow: none;
+                gap: 20px;
+                overflow-y: auto; /* 長い場合スクロール可 */
+                /* スマホではElectron用のHoverアニメーションを無効化 */
+                transform: none !important;
+            }
+
+            .player-card:hover {
+                transform: none;
+                box-shadow: none;
+            }
+
+            /* ウィンドウ操作コントロール類は不要なので非表示 */
+            .titlebar, .window-controls {
+                display: none !important;
+            }
+
+            /* ガラス背景と光沢も不要なら非表示にするか、全画面に合わせる */
+            .glass-bg-layer, .glass-highlight-layer {
+                border-radius: 0;
+            }
+            .glass-highlight-layer {
+                height: 30%; /* 面積を小さく */
+            }
+
+            /* アルバムアートのサイズ調整 */
+            .album-container {
+                width: 280px;
+                height: 280px;
+                margin-top: 16px;
+                box-shadow: 0 15px 35px rgba(0,0,0,0.4);
+            }
+
+            /* 各種ボタンのタップ領域を拡大 */
+            .controls .btn {
+                width: 60px;
+                height: 60px;
+            }
+            .controls .btn span {
+                font-size: 28px;
+            }
+            .controls .btn-main {
+                width: 72px;
+                height: 72px;
+            }
+            .controls .btn-main span {
+                font-size: 36px;
+            }
+
+            /* シークバーなどの余白 */
+            .progress-wrapper {
+                margin: 8px 0;
+            }
+            .utils-wrapper {
+                margin-top: 8px;
+            }
+
+            /* Playlistの最適化 */
+            .playlist-section {
+                gap: 12px;
+                overflow: visible; /* 親でスクロール */
+            }
+            .playlist-item {
+                padding: 14px 12px; /* タップ領域広く */
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- プレイヤーUI -->
+    <div class="player-card">
+        
+        <!-- ガラス背景層（フロストガラスの質感を出す） -->
+        <div class="glass-bg-layer"></div>
+        <!-- ガラス光沢層（上部の反射光） -->
+        <div class="glass-highlight-layer"></div>
+        
+        <!-- ウィンドウドラッグ用ヘッダー（カード内に移動） -->
+        <div class="titlebar">
+            <span class="title">Glass Player</span>
+        </div>
+
+        <!-- ウィンドウコントロール（最小化・ピン留め・ミニモード・閉じる） -->
+        <div class="window-controls">
+            <button id="btn-minimize" title="最小化">─</button>
+            <button id="btn-pin" title="常に手前に表示"><span class="material-symbols-rounded" style="font-size:16px;">push_pin</span></button>
+            <button id="btn-mini" title="ミニモード / 通常モード切替"><span class="material-symbols-rounded" style="font-size:16px;">picture_in_picture_alt</span></button>
+            <button id="btn-close" class="btn-close" title="閉じる">✕</button>
+        </div>
+        
+        <!-- プレイヤーカード内の波形アニメーション -->
+        <canvas id="bg-canvas"></canvas>
+        
+        <!-- アルバムアート -->
+        <div class="album-container" id="album-container">
+            <span class="material-symbols-rounded album-placeholder" id="album-placeholder">music_note</span>
+            <img id="album-art" src="" alt="Album Art" style="display: none;">
+        </div>
+
+        <!-- 曲情報 -->
+        <div class="info">
+            <h2 id="track-name">Select a track</h2>
+            <p id="artist-name">Artist</p>
+        </div>
+
+        <!-- シークバー -->
+        <div class="progress-wrapper">
+            <input type="range" id="seek-bar" min="0" max="100" value="0">
+            <div class="time-wrapper">
+                <span id="current-time">0:00</span>
+                <span id="duration">0:00</span>
+            </div>
+        </div>
+
+        <!-- コントローラー -->
+        <div class="controls">
+            <button class="btn" id="prev-btn" title="Previous">
+                <span class="material-symbols-rounded">skip_previous</span>
+            </button>
+            <button class="btn btn-main" id="play-btn" title="Play/Pause">
+                <span class="material-symbols-rounded" id="play-icon">play_arrow</span>
+            </button>
+            <button class="btn" id="next-btn" title="Next">
+                <span class="material-symbols-rounded">skip_next</span>
+            </button>
+        </div>
+
+        <!-- ボトムエリア (音量 & プレイリストトグル) -->
+        <div class="utils-wrapper">
+            <!-- 音量 -->
+            <div class="volume-wrapper">
+                <span class="material-symbols-rounded" id="vol-icon">volume_up</span>
+                <input type="range" id="volume-bar" min="0" max="1" step="0.01" value="0.5">
+            </div>
+            
+            <button class="playlist-toggle" id="playlist-toggle" title="Toggle Playlist">
+                <span class="material-symbols-rounded">queue_music</span>
+            </button>
+        </div>
+
+        <!-- プレイリスト (初期非表示) -->
+        <div class="playlist-section" id="playlist-section">
+            <div class="file-input-wrapper">
+                <input type="file" id="file-input" multiple accept="audio/mpeg, audio/mp3, audio/flac, audio/wav, audio/ogg">
+                <label for="file-input">
+                    <span class="material-symbols-rounded">add</span>
+                    Add Local Files
+                </label>
+            </div>
+            <ul class="playlist" id="playlist">
+                <!-- 曲一覧がJavaScriptで追加されます -->
+            </ul>
+        </div>
+
+    </div>
+
+    <script>
+        // =========================================================
+        // アプリケーションの状態とDOM要素の取得
+        // =========================================================
+        const audio = new Audio();
+        let playlistFiles = [];
+        let currentTrackIndex = -1;
+
+        // UI要素
+        const fileInput = document.getElementById('file-input');
+        const playlistEl = document.getElementById('playlist');
+        const playlistSection = document.getElementById('playlist-section');
+        const playlistToggle = document.getElementById('playlist-toggle');
+        
+        const playBtn = document.getElementById('play-btn');
+        const playIcon = document.getElementById('play-icon');
+        const prevBtn = document.getElementById('prev-btn');
+        const nextBtn = document.getElementById('next-btn');
+        const seekBar = document.getElementById('seek-bar');
+        const volumeBar = document.getElementById('volume-bar');
+        const volIcon = document.getElementById('vol-icon');
+        const currentTimeEl = document.getElementById('current-time');
+        const durationEl = document.getElementById('duration');
+        
+        const trackNameEl = document.getElementById('track-name');
+        const artistNameEl = document.getElementById('artist-name');
+        const albumArtEl = document.getElementById('album-art');
+        const albumPlaceholder = document.getElementById('album-placeholder');
+        const albumContainer = document.getElementById('album-container');
+
+        // =========================================================
+        // Electronウィンドウコントロール & ミニモード
+        // =========================================================
+        // preload.js経由で公開されたAPIを使う（ブラウザでは何もしない）
+        const btnMinimize = document.getElementById('btn-minimize');
+        const btnMini = document.getElementById('btn-mini');
+        const btnPin = document.getElementById('btn-pin');
+        const btnClose = document.getElementById('btn-close');
+        
+        let isMiniMode = false;
+        let isAlwaysOnTop = false;
+        
+        if (window.electronAPI) {
+            btnMinimize.addEventListener('click', () => window.electronAPI.minimize());
+            btnClose.addEventListener('click', () => window.electronAPI.close());
+            
+            // 常に手前に表示（ピン留め）
+            btnPin.addEventListener('click', () => {
+                isAlwaysOnTop = !isAlwaysOnTop;
+                window.electronAPI.toggleAlwaysOnTop(isAlwaysOnTop);
+                
+                if (isAlwaysOnTop) {
+                    btnPin.classList.add('active');
+                    btnPin.title = "常に手前に表示（解除）";
+                } else {
+                    btnPin.classList.remove('active');
+                    btnPin.title = "常に手前に表示";
+                }
+            });
+            
+            btnMini.addEventListener('click', () => {
+                isMiniMode = !isMiniMode;
+                document.body.classList.toggle('mini-mode', isMiniMode);
+                window.electronAPI.toggleMiniMode(isMiniMode);
+                
+                // アイコンの切り替え
+                const icon = btnMini.querySelector('span');
+                if (isMiniMode) {
+                    icon.textContent = 'aspect_ratio';
+                    btnMini.title = "通常モードに戻す";
+                } else {
+                    icon.textContent = 'picture_in_picture_alt';
+                    btnMini.title = "ミニモードにする";
+                }
+                
+                // モード切替時にキャンバスのサイズもリサイズ
+                setTimeout(resize, 50);
+            });
+        } else {
+            // ブラウザ環境ではウィンドウコントロールを非表示にする
+            const controls = document.querySelector('.window-controls');
+            if (controls) controls.style.display = 'none';
+        }
+
+        // デザイン・システム設定
+        // シークバーの進行部分を薄いシアンに変更
+        const ACCENT_COLOR = '#00e5ff';
+        const PROGRESS_FILL_COLOR = 'rgba(0, 229, 255, 0.35)'; // 再生済み部分を薄いシアンに
+        const TRACK_BG = 'var(--track-bg)';
+
+        // =========================================================
+        // イベントリスナーの登録
+        // =========================================================
+        fileInput.addEventListener('change', handleFiles);
+        playBtn.addEventListener('click', togglePlay);
+        prevBtn.addEventListener('click', playPrev);
+        nextBtn.addEventListener('click', playNext);
+        seekBar.addEventListener('input', seekTo);
+        volumeBar.addEventListener('input', updateVolume);
+        
+        // プレイリストの表示切り替え（ホバー時に少し色も変えるのはCSSで対応）
+        playlistToggle.addEventListener('click', () => {
+            playlistSection.classList.toggle('show');
+            if (playlistSection.classList.contains('show')) {
+                playlistToggle.style.color = 'var(--accent)'; // アクセントカラーで強調
+                playlistToggle.style.background = 'rgba(255,255,255,0.12)';
+            } else {
+                playlistToggle.style.color = '';
+                playlistToggle.style.background = '';
+            }
+        });
+
+        // オーディオのイベント
+        audio.addEventListener('timeupdate', updateProgress);
+        audio.addEventListener('loadedmetadata', () => {
+            seekBar.max = audio.duration || 100;
+            durationEl.textContent = formatTime(audio.duration || 0);
+        });
+        audio.addEventListener('ended', playNext);
+        
+        audio.addEventListener('play', syncPlayState);
+        audio.addEventListener('pause', syncPlayState);
+
+        // =========================================================
+        // 初期状態・背景のUI更新
+        // =========================================================
+        initVolume();
+        updateSliderBackground(seekBar, 0); // 初期シークバーは0
+
+        function updateSliderBackground(slider, percentage) {
+            // valueではなく実際の割合(%)を受け取り、プログレスカラー（白の半透明）で塗りつぶす
+            slider.style.background = `linear-gradient(to right, ${PROGRESS_FILL_COLOR} ${percentage}%, ${TRACK_BG} ${percentage}%)`;
+        }
+        
+        function initVolume() {
+            audio.volume = volumeBar.value;
+            updateSliderBackground(volumeBar, audio.volume * 100);
+        }
+
+        // =========================================================
+        // 各種機能の実装
+        // =========================================================
+
+        /**
+         * 1. ファイル選択時の処理
+         */
+        function handleFiles(e) {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+            
+            playlistFiles = [...playlistFiles, ...files];
+            renderPlaylist();
+            
+            if (currentTrackIndex === -1) {
+                loadTrack(0);
+                setTimeout(() => {
+                    audio.play().catch(console.error);
+                }, 100);
+            }
+        }
+
+        /**
+         * 2. プレイリストを画面に描画
+         */
+        function renderPlaylist() {
+            playlistEl.innerHTML = '';
+            
+            playlistFiles.forEach((file, index) => {
+                const li = document.createElement('li');
+                li.className = `playlist-item ${index === currentTrackIndex ? 'active' : ''}`;
+                
+                const icon = document.createElement('span');
+                icon.className = 'material-symbols-rounded';
+                icon.textContent = (index === currentTrackIndex && !audio.paused) ? 'graphic_eq' : 'music_note';
+                
+                const text = document.createElement('span');
+                text.textContent = file.name.replace(/\.[^/.]+$/, "");
+                text.style.overflow = 'hidden';
+                text.style.textOverflow = 'ellipsis';
+                text.style.whiteSpace = 'nowrap';
+                text.style.flex = '1';
+                
+                li.appendChild(icon);
+                li.appendChild(text);
+                
+                li.addEventListener('click', () => {
+                    if (currentTrackIndex === index) {
+                        togglePlay(); 
+                    } else {
+                        loadTrack(index);
+                        audio.play().catch(e => console.error(e));
+                    }
+                });
+                
+                playlistEl.appendChild(li);
+            });
+            
+            // プレイリストが空でない場合はトグルボタンの色を明るく
+            if (playlistFiles.length > 0 && !playlistSection.classList.contains('show')) {
+                playlistToggle.style.color = 'var(--text-primary)';
+            }
+        }
+
+        /**
+         * 3. 曲の読み込み
+         */
+        function loadTrack(index) {
+            if (playlistFiles.length === 0) return;
+            
+            currentTrackIndex = index;
+            const file = playlistFiles[index];
+            
+            audio.src = URL.createObjectURL(file);
+            
+            trackNameEl.textContent = file.name.replace(/\.[^/.]+$/, "");
+            artistNameEl.textContent = "Unknown Artist";
+            albumArtEl.style.display = 'none';
+            albumArtEl.style.opacity = '0';
+            albumPlaceholder.style.display = 'block';
+            
+            // シークバー初期化
+            seekBar.value = 0;
+            updateSliderBackground(seekBar, 0);
+            
+            if (window.jsmediatags) {
+                window.jsmediatags.read(file, {
+                    onSuccess: function(tag) {
+                        const tags = tag.tags;
+                        
+                        if (tags.title) trackNameEl.textContent = tags.title;
+                        if (tags.artist) artistNameEl.textContent = tags.artist;
+                        
+                        // 曲タイトルのツールチップ設定 (省略された場合用)
+                        trackNameEl.title = trackNameEl.textContent;
+                        artistNameEl.title = artistNameEl.textContent;
+                        
+                        if (tags.picture) {
+                            const { data, format } = tags.picture;
+                            const byteArray = new Uint8Array(data);
+                            const blob = new Blob([byteArray], { type: format });
+                            const url = URL.createObjectURL(blob);
+                            
+                            albumArtEl.onload = () => {
+                                albumArtEl.style.display = 'block';
+                                setTimeout(() => albumArtEl.style.opacity = '1', 50); // フェードイン
+                                albumPlaceholder.style.display = 'none';
+                            };
+                            albumArtEl.src = url;
+                        }
+                    },
+                    onError: function(error) {}
+                });
+            }
+
+            renderPlaylist();
+        }
+
+        /**
+         * 4. 再生 / 一時停止の切り替え
+         */
+        function togglePlay() {
+            if (playlistFiles.length === 0) return;
+            
+            if (audio.paused) {
+                audio.play().catch(e => console.error("Play prevented:", e));
+            } else {
+                audio.pause();
+            }
+        }
+
+        /**
+         * 音声の再生状態とUIの同期
+         */
+        function syncPlayState() {
+            if (audio.paused) {
+                playIcon.textContent = 'play_arrow';
+                albumContainer.classList.remove('playing');
+                isWavePlaying = false; // 背景波形停止指示
+            } else {
+                playIcon.textContent = 'pause';
+                albumContainer.classList.add('playing');
+                isWavePlaying = true; // 背景波形再生指示
+            }
+            renderPlaylist();
+        }
+
+        /**
+         * 5. 次の曲へ
+         */
+        function playNext() {
+            if (playlistFiles.length === 0) return;
+            let nextIndex = currentTrackIndex + 1;
+            if (nextIndex >= playlistFiles.length) {
+                nextIndex = 0;
+            }
+            loadTrack(nextIndex);
+            audio.play().catch(e => console.error(e));
+        }
+
+        /**
+         * 6. 前の曲へ
+         */
+        function playPrev() {
+            if (playlistFiles.length === 0) return;
+            
+            // 曲の最初数秒であれば曲の先頭に戻す
+            if (audio.currentTime > 3) {
+                audio.currentTime = 0;
+                return;
+            }
+            
+            let prevIndex = currentTrackIndex - 1;
+            if (prevIndex < 0) {
+                prevIndex = playlistFiles.length - 1;
+            }
+            loadTrack(prevIndex);
+            audio.play().catch(e => console.error(e));
+        }
+
+        /**
+         * 7. シークバーの更新 (audio -> UI)
+         */
+        function updateProgress() {
+            if (isNaN(audio.duration)) return;
+            
+            seekBar.value = audio.currentTime;
+            currentTimeEl.textContent = formatTime(audio.currentTime);
+            
+            // シークバーの背景色をアクセントカラーで塗りつぶす
+            const progress = (audio.currentTime / audio.duration) * 100;
+            updateSliderBackground(seekBar, progress);
+        }
+
+        /**
+         * 8. 再生位置の変更 (UI -> audio)
+         */
+        function seekTo() {
+            audio.currentTime = seekBar.value;
+            // つまみをドラッグ中も背景色をリアルタイムに更新
+            if(audio.duration) {
+                const progress = (seekBar.value / audio.duration) * 100;
+                updateSliderBackground(seekBar, progress);
+            }
+        }
+
+        /**
+         * 9. 音量調整
+         */
+        function updateVolume(e) {
+            audio.volume = e.target.value;
+            
+            if (audio.volume === 0) {
+                volIcon.textContent = 'volume_off';
+            } else if (audio.volume < 0.4) {
+                volIcon.textContent = 'volume_down';
+            } else {
+                volIcon.textContent = 'volume_up';
+            }
+            
+            // 音量バーの背景色更新
+            const progress = audio.volume * 100;
+            updateSliderBackground(volumeBar, progress);
+        }
+
+        /**
+         * 10. 時刻フォーマット
+         */
+        function formatTime(seconds) {
+            if (isNaN(seconds)) return "0:00";
+            const min = Math.floor(seconds / 60);
+            const sec = Math.floor(seconds % 60);
+            return `${min}:${sec < 10 ? '0' : ''}${sec}`;
+        }
+
+
+        // =========================================================
+        // 背景の簡易波形アニメーション (Canvas)
+        // =========================================================
+        const canvas = document.getElementById('bg-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let isWavePlaying = false;
+        let time = 0;
+        let waves = [];
+
+        // Canvasサイズをプレイヤーカードに合わせて初期化
+        const playerCard = document.querySelector('.player-card');
+        function resize() {
+            const rect = playerCard.getBoundingClientRect();
+            width = canvas.width = rect.width;
+            height = canvas.height = rect.height;
+            initWaves();
+        }
+        window.addEventListener('resize', resize);
+        
+        // 波形の初期設定（カードサイズに合わせた振幅・位置）
+        function initWaves() {
+            waves = [];
+            const waveCount = 4;
+            for (let i = 0; i < waveCount; i++) {
+                waves.push({
+                    yOffset: height * 0.4 + (Math.random() * height * 0.3), // カード内で分散
+                    amplitude: 15 + Math.random() * 30, // カード内に収まる振幅
+                    frequency: 0.008 + Math.random() * 0.012, // カード幅に合わせた周波数
+                    speed: 0.015 + Math.random() * 0.025, // ゆっくり滑らか
+                    phase: Math.random() * Math.PI * 2,
+                    color: i === 0 ? 'rgba(0, 229, 255, 0.5)' :  // メインのシアン波
+                           i === 1 ? 'rgba(0, 229, 255, 0.3)' :  // サブのシアン波
+                           i === 2 ? 'rgba(255, 255, 255, 0.2)' : // 白い波
+                           'rgba(255, 255, 255, 0.1)'
+                });
+            }
+        }
+
+        function drawWave() {
+            ctx.clearRect(0, 0, width, height);
+            
+            // 再生中は波が大きく動き、停止中は穏やかに揺れる
+            const targetMultiplier = isWavePlaying ? 1.8 : 0.5;
+            time += isWavePlaying ? 1.2 : 0.3;
+
+            waves.forEach(w => {
+                ctx.beginPath();
+                
+                // カード幅に合わせて5pxごとに描画（より滑らか）
+                for (let x = 0; x <= width; x += 5) {
+                    const y = w.yOffset + Math.sin(x * w.frequency + time * w.speed + w.phase) * (w.amplitude * targetMultiplier);
+                    if (x === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                
+                ctx.strokeStyle = w.color;
+                ctx.lineWidth = 1.5; // 少し太めにして見えやすく
+                ctx.stroke();
+            });
+
+            requestAnimationFrame(drawWave);
+        }
+
+        // 初期化とアニメーションスタート
+        resize();
+        drawWave();
+
+    </script>
+</body>
+</html>

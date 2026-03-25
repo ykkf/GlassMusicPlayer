@@ -1,0 +1,17 @@
+{
+  "name": "Glass Music Player",
+  "short_name": "MusicPlayer",
+  "description": "ガラス風デザインの音楽プレイヤー",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0a0f1e",
+  "theme_color": "#00e5ff",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

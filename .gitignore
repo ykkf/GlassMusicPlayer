@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.exe
+.DS_Store
+.env
+package-lock.json
+%LOCALAPPDATA%/
