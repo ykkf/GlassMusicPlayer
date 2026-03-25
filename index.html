@@ -24,10 +24,6 @@
         }
     </script>
     
-    <!-- Google Drive API (GAPI) & Google Identity Services (GIS) -->
-    <script async defer src="https://apis.google.com/js/api.js"></script>
-    <script async defer src="https://accounts.google.com/gsi/client"></script>
-
     <!-- jsmediatags (MP3のID3タグ/アルバムアート読み込み用) -->
     <!-- Electron環境ではnode_modulesから読み込み、ブラウザではCDNから読み込み -->
     <script>
@@ -525,6 +521,81 @@
         }
 
         /* =========================================================
+           3D Audio パネル
+           ========================================================= */
+        .panel-3d {
+            position: absolute;
+            bottom: 60px;
+            right: 15px;
+            width: 220px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 15px;
+            display: none;
+            flex-direction: column;
+            gap: 12px;
+            z-index: 100;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+        .panel-3d.show {
+            display: flex;
+            animation: fadeIn 0.2s ease-out forwards;
+        }
+        .panel-3d .row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+        }
+        /* トグルスイッチ */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 34px;
+            height: 20px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider-round {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: rgba(255, 255, 255, 0.2);
+            transition: .3s;
+            border-radius: 34px;
+        }
+        .slider-round:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        .toggle-switch input:checked + .slider-round {
+            background-color: var(--accent);
+        }
+        .toggle-switch input:checked + .slider-round:before {
+            transform: translateX(14px);
+        }
+
+        /* パネル内のスライダー */
+        .panel-3d input[type="range"] {
+            flex-grow: 1;
+            margin-left: 10px;
+            height: 4px;
+        }
+
+        /* =========================================================
            プレイリストセクション (折りたたみ式)
            ========================================================= */
         .playlist-section {
@@ -542,15 +613,6 @@
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(-15px) scale(0.98); }
             to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-
-        /* Drive同期用ローディングアニメーション */
-        @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-        }
-        .spin {
-            animation: spin 1s linear infinite;
         }
 
         .file-input-wrapper {
@@ -895,7 +957,7 @@
             </button>
         </div>
 
-        <!-- ボトムエリア (音量 & ドライブ連携 & プレイリストトグル) -->
+        <!-- ボトムエリア (音量 & プレイリストトグル) -->
         <div class="utils-wrapper">
             <!-- 音量 -->
             <div class="volume-wrapper">
@@ -903,19 +965,36 @@
                 <input type="range" id="volume-bar" min="0" max="1" step="0.01" value="0.5">
             </div>
             
-            <div style="display: flex; gap: 4px; align-items: center;">
-                <!-- Drive状態表示 -->
-                <span id="drive-status-text" style="font-size: 10px; color: var(--text-secondary); opacity: 0.8; margin-right: 4px; display: none;"></span>
-                
-                <!-- Drive 連携ボタン -->
-                <button class="playlist-toggle" id="btn-drive-connect" title="Google Driveに接続 (ログイン)">
-                    <span class="material-symbols-rounded" id="drive-icon">cloud_off</span>
+            <div style="display: flex; gap: 4px;">
+                <!-- 3D Audio トグル -->
+                <button class="playlist-toggle" id="btn-3d" title="3D Audio (立体音響)">
+                    <span class="material-symbols-rounded">spatial_audio</span>
                 </button>
-                
-                <!-- プレイリストトグル -->
                 <button class="playlist-toggle" id="playlist-toggle" title="Toggle Playlist">
                     <span class="material-symbols-rounded">queue_music</span>
                 </button>
+            </div>
+        </div>
+
+        <!-- 3D Audio パネル (初期非表示) -->
+        <div class="panel-3d" id="panel-3d">
+            <div class="row">
+                <span>3D Audio (立体音響)</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-3d-effect">
+                    <span class="slider-round"></span>
+                </label>
+            </div>
+            <div class="row">
+                <span class="material-symbols-rounded" style="font-size: 16px;">compare_arrows</span>
+                <input type="range" id="slider-pan" min="-1" max="1" step="0.01" value="0" disabled>
+            </div>
+            <div class="row">
+                <span>Auto-Pan (自動移動)</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-auto-pan" disabled>
+                    <span class="slider-round"></span>
+                </label>
             </div>
         </div>
 
@@ -958,6 +1037,12 @@
         const volIcon = document.getElementById('vol-icon');
         const currentTimeEl = document.getElementById('current-time');
         const durationEl = document.getElementById('duration');
+        
+        const btn3d = document.getElementById('btn-3d');
+        const panel3d = document.getElementById('panel-3d');
+        const toggle3dEffect = document.getElementById('toggle-3d-effect');
+        const sliderPan = document.getElementById('slider-pan');
+        const toggleAutoPan = document.getElementById('toggle-auto-pan');
         
         const trackNameEl = document.getElementById('track-name');
         const artistNameEl = document.getElementById('artist-name');
@@ -1082,7 +1167,149 @@
         }
 
         // =========================================================
-        // 各種機能の実装
+        // 3D Audio (Web Audio API) 実装
+        // =========================================================
+        let audioCtx;
+        let sourceNode;
+        let pannerNode;
+        let filterNode;
+        let gainNode;
+        let is3DEnabled = false;
+        let isAutoPan = false;
+        let panValue = 0;
+        let panDirection = 1;
+        let autoPanAnimFrame;
+
+        /** 初回操作時にAudioContextを初期化する（ブラウザの静音ポリシー対策） */
+        function initWebAudio() {
+            if (audioCtx) return;
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContext();
+            
+            // 既存の <audio> 要素から音源を生成
+            sourceNode = audioCtx.createMediaElementSource(audio);
+            
+            // 左右のパン（広がり・位置）を制御するノード
+            pannerNode = audioCtx.createStereoPanner();
+            pannerNode.pan.value = 0;
+            
+            // 距離感（奥行き）を表現するためのローパスフィルター
+            // 高音を少し削ることで遠くからの音に聞こえる効果を狙う
+            filterNode = audioCtx.createBiquadFilter();
+            filterNode.type = 'lowpass';
+            filterNode.frequency.value = 24000; // 初期値はスルー(人間の可聴域以上)
+            
+            // 微妙な音量減衰で距離感を出すためのゲインノード
+            gainNode = audioCtx.createGain();
+            gainNode.gain.value = 1.0;
+
+            // 接続: source -> filter -> panner -> gain -> destination(スピーカー)
+            sourceNode.connect(filterNode);
+            filterNode.connect(pannerNode);
+            pannerNode.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+        }
+
+        function update3DState() {
+            // Contextがsuspend状態から復帰させる
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            if (is3DEnabled) {
+                // 3D効果ON：距離感を出すために軽く高音を削り、少し音量を下げる
+                filterNode.frequency.setTargetAtTime(8000, audioCtx.currentTime, 0.5); 
+                gainNode.gain.setTargetAtTime(0.95, audioCtx.currentTime, 0.5);
+                
+                sliderPan.disabled = isAutoPan; // オートパン時は手動スライダーをロック
+                toggleAutoPan.disabled = false;
+                
+                if (isAutoPan) {
+                    startAutoPan();
+                } else {
+                    stopAutoPan();
+                    pannerNode.pan.setTargetAtTime(parseFloat(sliderPan.value), audioCtx.currentTime, 0.1);
+                }
+            } else {
+                // 3D効果OFF：バイパス状態（そのままの音源）に戻す
+                if (filterNode) {
+                    filterNode.frequency.setTargetAtTime(24000, audioCtx.currentTime, 0.5);
+                    gainNode.gain.setTargetAtTime(1.0, audioCtx.currentTime, 0.5);
+                    pannerNode.pan.setTargetAtTime(0, audioCtx.currentTime, 0.5);
+                }
+                sliderPan.disabled = true;
+                toggleAutoPan.disabled = true;
+                stopAutoPan();
+            }
+        }
+
+        function autoPanLoop() {
+            if (!is3DEnabled || !isAutoPan) return;
+            
+            // 非常になめらかに左右を往復させる
+            panValue += 0.003 * panDirection;
+            if (panValue >= 1) { panValue = 1; panDirection = -1; }
+            if (panValue <= -1) { panValue = -1; panDirection = 1; }
+            
+            pannerNode.pan.value = panValue;
+            
+            // スライダーUIも連動して動かす
+            sliderPan.value = panValue;
+            updateSliderBackground(sliderPan, (panValue + 1) / 2);
+            
+            autoPanAnimFrame = requestAnimationFrame(autoPanLoop);
+        }
+
+        function startAutoPan() {
+            if (!autoPanAnimFrame) autoPanLoop();
+        }
+
+        function stopAutoPan() {
+            if (autoPanAnimFrame) {
+                cancelAnimationFrame(autoPanAnimFrame);
+                autoPanAnimFrame = null;
+            }
+        }
+
+        // --- 3D Audio UI イベント ---
+        btn3d.addEventListener('click', () => {
+            panel3d.classList.toggle('show');
+            if (panel3d.classList.contains('show')) {
+                btn3d.style.color = 'var(--accent)';
+            } else {
+                btn3d.style.color = '';
+            }
+        });
+
+        // パネル外クリックでパネルを閉じる
+        document.addEventListener('click', (e) => {
+            if (!panel3d.contains(e.target) && !btn3d.contains(e.target)) {
+                panel3d.classList.remove('show');
+                btn3d.style.color = '';
+            }
+        });
+
+        toggle3dEffect.addEventListener('change', (e) => {
+            initWebAudio(); // ユーザーの操作を起点にInit
+            is3DEnabled = e.target.checked;
+            update3DState();
+        });
+
+        sliderPan.addEventListener('input', (e) => {
+            if (is3DEnabled && !isAutoPan && audioCtx) {
+                updateSliderBackground(e.target, (parseFloat(e.target.value) + 1) / 2);
+                pannerNode.pan.setTargetAtTime(parseFloat(e.target.value), audioCtx.currentTime, 0.05);
+            }
+        });
+
+        toggleAutoPan.addEventListener('change', (e) => {
+            isAutoPan = e.target.checked;
+            update3DState();
+        });
+
+
+        // =========================================================
+        // プレイヤの機能実装
         // =========================================================
 
         /**
@@ -1173,34 +1400,17 @@
             currentTrackIndex = index;
             const file = playlistFiles[index];
             
-            // UIのリセット
+            audio.src = URL.createObjectURL(file);
+            
+            trackNameEl.textContent = file.name.replace(/\.[^/.]+$/, "");
+            artistNameEl.textContent = "Unknown Artist";
             albumArtEl.style.display = 'none';
             albumArtEl.style.opacity = '0';
             albumPlaceholder.style.display = 'block';
+            
+            // シークバー初期化
             seekBar.value = 0;
             updateSliderBackground(seekBar, 0);
-
-            if (file.isDrive) {
-                // --- Driveからのストリーミング再生 ---
-                // 名前から拡張子を除去してタイトルに
-                trackNameEl.textContent = file.name.replace(/\.[^/.]+$/, "");
-                artistNameEl.textContent = "Google Drive";
-                trackNameEl.title = trackNameEl.textContent;
-                artistNameEl.title = artistNameEl.textContent;
-                
-                // アクセストークンを付与して直接ストリーミング再生
-                const token = gapi.client.getToken().access_token;
-                audio.src = `https://www.googleapis.com/drive/v3/files/${file.driveId}?alt=media&access_token=${token}`;
-                
-                updateMediaSessionMetadata(trackNameEl.textContent, "Google Drive", "", null);
-                renderPlaylist();
-                return; // Driveの場合は jsmediatags (ID3解析) をスキップして高速化
-            }
-
-            // --- ローカルファイルの再生 ---
-            audio.src = URL.createObjectURL(file);
-            trackNameEl.textContent = file.name.replace(/\.[^/.]+$/, "");
-            artistNameEl.textContent = "Unknown Artist";
 
             // デフォルト情報でMedia Sessionを初期化
             updateMediaSessionMetadata(trackNameEl.textContent, "Unknown Artist", "", null);
@@ -1437,273 +1647,6 @@
         resize();
         drawWave();
 
-        // =========================================================
-        // Google Drive 連携機能 (GAPI & GIS)
-        // =========================================================
-        
-        // ！！！事前にGoogle Cloud Consoleから取得した値に必ず書き換えてください！！！
-        const CLIENT_ID = 'YOUR_CLIENT_ID';
-        const API_KEY = 'YOUR_API_KEY';
-        
-        const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
-        const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly';
-        
-        let tokenClient;
-        let gapiInited = false;
-        let gisInited = false;
-        let playlistFileId = null; // playlist.json のファイルID
-        let musicFolderId = null;  // musicフォルダのID
-
-        
-        const btnDriveConnect = document.getElementById('btn-drive-connect');
-        const driveStatusText = document.getElementById('drive-status-text');
-        const driveIcon = document.getElementById('drive-icon');
-
-        /**
-         * GAPIとGISの初期化が完了したかチェックし、完了していればボタンを有効化
-         */
-        function maybeEnableButtons() {
-            if (gapiInited && gisInited) {
-                if (btnDriveConnect) btnDriveConnect.onclick = handleAuthClick;
-            }
-        }
-
-        /** GAPI コールバック */
-        window.gapiLoaded = function() {
-            gapi.load('client', initializeGapiClient);
-        }
-        async function initializeGapiClient() {
-            try {
-                await gapi.client.init({
-                    apiKey: API_KEY,
-                    discoveryDocs: [DISCOVERY_DOC],
-                });
-                gapiInited = true;
-                maybeEnableButtons();
-            } catch (e) {
-                console.error('GAPI Init Error:', e);
-                updateDriveStatus('API Init Error');
-            }
-        }
-
-        /** GIS コールバック */
-        window.gisLoaded = function() {
-            tokenClient = google.accounts.oauth2.initTokenClient({
-                client_id: CLIENT_ID,
-                scope: SCOPES,
-                callback: '', // リクエスト時に動的にセット
-            });
-            gisInited = true;
-            maybeEnableButtons();
-        }
-
-        /** UIステータス更新 */
-        function updateDriveStatus(msg, isSpinning = false) {
-            if (!driveStatusText || !driveIcon) return;
-            driveStatusText.textContent = msg;
-            driveStatusText.style.display = msg ? 'inline-block' : 'none';
-            if (isSpinning) {
-                driveIcon.classList.add('spin');
-                driveIcon.textContent = 'sync';
-            } else {
-                driveIcon.classList.remove('spin');
-                driveIcon.textContent = 'cloud_done'; // 完了後はアイコンを cloud_done に
-            }
-        }
-
-        /** ログイン・同期ボタンのクリック処理 */
-        function handleAuthClick() {
-            if (CLIENT_ID === 'YOUR_CLIENT_ID') {
-                alert('ソースコード内の CLIENT_ID と API_KEY をご自身のものに変更してください。');
-                return;
-            }
-            if (gapi.client.getToken() !== null) {
-                // 既にトークンがあればそのまま手動同期を実行
-                syncDriveMusic();
-                return;
-            }
-            tokenClient.callback = async (resp) => {
-                if (resp.error !== undefined) {
-                    throw (resp);
-                }
-                // 認証成功したら自動で同期開始
-                if (btnDriveConnect) btnDriveConnect.style.color = 'var(--accent)';
-                await syncDriveMusic();
-            };
-            tokenClient.requestAccessToken({prompt: 'consent'});
-        }
-
-        /**
-         * Drive内の 'music' フォルダを検索し、なければ作成する
-         */
-        async function getOrCreateMusicFolder() {
-            const folderName = 'music';
-            const query = `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-            let response = await gapi.client.drive.files.list({
-                q: query,
-                spaces: 'drive',
-                fields: 'files(id, name)'
-            });
-            let files = response.result.files;
-            
-            if (files && files.length > 0) {
-                return files[0].id;
-            } else {
-                updateDriveStatus('Creating music folder...', true);
-                const fileMetadata = {
-                    'name': folderName,
-                    'mimeType': 'application/vnd.google-apps.folder'
-                };
-                const folder = await gapi.client.drive.files.create({
-                    resource: fileMetadata,
-                    fields: 'id'
-                });
-                return folder.result.id;
-            }
-        }
-
-        /**
-         * playlist.json の内容をDriveに保存（Driveから読み込んだ曲の順序などを保持）
-         */
-        async function savePlaylistToDrive(folderId, driveIdsArray) {
-            try {
-                const token = gapi.client.getToken().access_token;
-                const metadata = { name: 'playlist.json', mimeType: 'application/json' };
-                const fileContent = JSON.stringify({ order: driveIdsArray });
-                const blob = new Blob([fileContent], { type: 'application/json' });
-                
-                let url, method;
-                if (playlistFileId) {
-                    url = `https://www.googleapis.com/upload/drive/v3/files/${playlistFileId}?uploadType=multipart`;
-                    method = 'PATCH';
-                } else {
-                    metadata.parents = [folderId];
-                    url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
-                    method = 'POST';
-                }
-                
-                const form = new FormData();
-                form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-                form.append('file', blob);
-                
-                const res = await fetch(url, {
-                    method: method,
-                    headers: { 'Authorization': 'Bearer ' + token },
-                    body: form
-                });
-                
-                const resData = await res.json();
-                if (!playlistFileId && resData.id) {
-                    playlistFileId = resData.id;
-                }
-            } catch(e) {
-                console.error('Error saving playlist.json', e);
-            }
-        }
-
-        /**
-         * Drive連携のメインロジック：フォルダ内のMP3を検索し、プレイリストに統合
-         */
-        async function syncDriveMusic() {
-            try {
-                updateDriveStatus('Syncing Drive...', true);
-                
-                // 1. フォルダを探す
-                musicFolderId = await getOrCreateMusicFolder();
-                
-                // --- playlist.json の検索と読み取り ---
-                let playlistOrder = [];
-                const plQuery = `'${musicFolderId}' in parents and name = 'playlist.json' and trashed = false`;
-                const plResponse = await gapi.client.drive.files.list({ q: plQuery, spaces: 'drive', fields: 'files(id)' });
-                
-                if (plResponse.result.files && plResponse.result.files.length > 0) {
-                    playlistFileId = plResponse.result.files[0].id;
-                    const token = gapi.client.getToken().access_token;
-                    const plDataRes = await fetch(`https://www.googleapis.com/drive/v3/files/${playlistFileId}?alt=media`, {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (plDataRes.ok) {
-                        try {
-                            const plJson = await plDataRes.json();
-                            if (plJson && Array.isArray(plJson.order)) {
-                                playlistOrder = plJson.order;
-                            }
-                        } catch(e) { console.error('playlist.json error', e); }
-                    }
-                }
-
-                // 2. フォルダ内の音声ファイルを検索 (音声全般)
-                const query = `'${musicFolderId}' in parents and mimeType contains 'audio/' and trashed = false`;
-                const response = await gapi.client.drive.files.list({
-                    q: query,
-                    spaces: 'drive',
-                    fields: 'files(id, name, mimeType, size)'
-                });
-                
-                const driveFiles = response.result.files;
-                if (!driveFiles || driveFiles.length === 0) {
-                    updateDriveStatus('No music found', false);
-                    if (driveIcon) driveIcon.textContent = 'cloud_off';
-                    setTimeout(() => updateDriveStatus(''), 3000);
-                    return;
-                }
-
-                // 3. Driveファイルを独自のオブジェクトとして playlistFiles に追加
-                const mappedFiles = driveFiles.map(f => ({
-                    isDrive: true,
-                    name: f.name,
-                    driveId: f.id,
-                    mimeType: f.mimeType
-                }));
-
-                // 4. playlist.jsonの順序に従って並び替え
-                if (playlistOrder.length > 0) {
-                    mappedFiles.sort((a, b) => {
-                        const idxA = playlistOrder.indexOf(a.driveId);
-                        const idxB = playlistOrder.indexOf(b.driveId);
-                        if (idxA === -1 && idxB === -1) return 0;
-                        if (idxA === -1) return 1;
-                        if (idxB === -1) return -1;
-                        return idxA - idxB;
-                    });
-                } else if (mappedFiles.length > 0) {
-                    // 初回：playlist.json が存在しなければ現在の順序で新規保存
-                    savePlaylistToDrive(musicFolderId, mappedFiles.map(f => f.driveId));
-                }
-
-                // 重複排除しながら追加（簡易的に名前でチェック）
-                const existingNames = playlistFiles.map(f => f.name);
-                const newFiles = mappedFiles.filter(f => !existingNames.includes(f.name));
-                
-                if (newFiles.length > 0) {
-                    playlistFiles = [...playlistFiles, ...newFiles];
-                    renderPlaylist();
-                    
-                    if (currentTrackIndex === -1 && playlistSection.classList.contains('show')) {
-                        loadTrack(0);
-                    }
-                    updateDriveStatus(`Synced ${newFiles.length} files.`, false);
-                } else {
-                    updateDriveStatus('Up to date.', false);
-                }
-                setTimeout(() => updateDriveStatus(''), 3000);
-
-            } catch (err) {
-                console.error("Sync Error:", err);
-                updateDriveStatus('Sync failed', false);
-                if (driveIcon) driveIcon.textContent = 'error';
-                setTimeout(() => updateDriveStatus(''), 3000);
-            }
-        }
-
-    </script>
-    <!-- GAPIとGISのスクリプト読み込み完了時に自動実行させるためのポーリング -->
-    <script>
-        const checkApis = setInterval(() => {
-            if (window.gapi && !gapiInited) window.gapiLoaded();
-            if (window.google && window.google.accounts && !gisInited) window.gisLoaded();
-            if (gapiInited && gisInited) clearInterval(checkApis);
-        }, 500);
     </script>
 </body>
 </html>
