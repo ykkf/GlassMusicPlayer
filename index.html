@@ -1115,12 +1115,13 @@
                     <span class="material-symbols-rounded">folder_open</span>
                     Music Folder
                 </button>
-                <!-- PC以外のWeb環境用 ファイル追加ボタン -->
-                <button class="btn-folder" id="btn-add-files" style="flex: 1;">
-                    <span class="material-symbols-rounded">add_circle</span>
-                    Add Music
+                <!-- Web/PWA環境用 フォルダ選択ボタン -->
+                <button class="btn-folder" id="btn-web-folder" style="flex: 1;">
+                    <span class="material-symbols-rounded">folder_open</span>
+                    Select Folder
                 </button>
-                <input type="file" id="file-input" multiple accept="audio/*" style="display: none;">
+                <!-- webkitdirectoryフォールバック用（非表示） -->
+                <input type="file" id="folder-input-fallback" webkitdirectory directory multiple style="display: none;">
             </div>
             <ul class="playlist" id="playlist">
                 <!-- 曲一覧がJavaScriptで追加されます -->
@@ -1186,13 +1187,13 @@
         let isAlwaysOnTop = false;
         
         const btnSelectFolder = document.getElementById('btn-select-folder');
-        const btnAddFiles = document.getElementById('btn-add-files');
-        const fileInput = document.getElementById('file-input');
+        const btnWebFolder = document.getElementById('btn-web-folder');
+        const folderInputFallback = document.getElementById('folder-input-fallback');
 
         if (window.electronAPI) {
             // Electron機能を利用可能な場合、ボタンを表示し代替を隠す
             if (btnSelectFolder) btnSelectFolder.style.display = 'flex';
-            if (btnAddFiles) btnAddFiles.style.display = 'none';
+            if (btnWebFolder) btnWebFolder.style.display = 'none';
             
             btnMinimize.addEventListener('click', () => window.electronAPI.minimize());
             btnClose.addEventListener('click', () => window.electronAPI.close());
@@ -1261,32 +1262,147 @@
             if (controls) controls.style.display = 'none';
         }
 
-        // PWA・ブラウザアプリ用のローカルファイルアップロード処理
-        if (btnAddFiles && fileInput) {
-            btnAddFiles.addEventListener('click', () => fileInput.click());
-            
-            fileInput.addEventListener('change', (e) => {
-                const files = Array.from(e.target.files);
-                if (files.length === 0) return;
-                
-                const newTracks = files.map(file => {
-                    return {
-                        name: file.name.replace(/\.[^/.]+$/, ""),
-                        path: URL.createObjectURL(file), // blob URL生成
-                        isElectronFile: false,
-                        rawFile: file // ID3タグ動的解析用に保持
-                    };
-                });
-                
-                playlistFiles = [...playlistFiles, ...newTracks];
-                renderPlaylist();
-                
-                if (currentTrackIndex === -1) {
+        // =======================================================
+        // PWA・Web環境用: フォルダ選択・読み込み・永続化
+        // =======================================================
+        const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.wma', '.webm'];
+
+        /** IndexedDBにディレクトリハンドルを保存 */
+        function saveDirectoryHandle(handle) {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('GlassMusicPlayerDB', 1);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('settings')) {
+                        db.createObjectStore('settings');
+                    }
+                };
+                req.onsuccess = (e) => {
+                    const db = e.target.result;
+                    const tx = db.transaction('settings', 'readwrite');
+                    tx.objectStore('settings').put(handle, 'directoryHandle');
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                };
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        /** IndexedDBからディレクトリハンドルを復元 */
+        function loadDirectoryHandle() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('GlassMusicPlayerDB', 1);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('settings')) {
+                        db.createObjectStore('settings');
+                    }
+                };
+                req.onsuccess = (e) => {
+                    const db = e.target.result;
+                    const tx = db.transaction('settings', 'readonly');
+                    const getReq = tx.objectStore('settings').get('directoryHandle');
+                    getReq.onsuccess = () => resolve(getReq.result || null);
+                    getReq.onerror = () => resolve(null);
+                };
+                req.onerror = () => resolve(null);
+            });
+        }
+
+        /** ディレクトリハンドルから音楽ファイルを取得 */
+        async function readAudioFilesFromHandle(dirHandle) {
+            const tracks = [];
+            for await (const entry of dirHandle.values()) {
+                if (entry.kind === 'file') {
+                    const lowerName = entry.name.toLowerCase();
+                    if (AUDIO_EXTENSIONS.some(ext => lowerName.endsWith(ext))) {
+                        const file = await entry.getFile();
+                        tracks.push({
+                            name: file.name,
+                            path: URL.createObjectURL(file),
+                            isElectronFile: false,
+                            rawFile: file
+                        });
+                    }
+                }
+            }
+            tracks.sort((a, b) => a.name.localeCompare(b.name));
+            return tracks;
+        }
+
+        /** File配列から音楽ファイルのみフィルタリング (webkitdirectoryフォールバック用) */
+        function filterAudioFiles(fileList) {
+            return Array.from(fileList).filter(file => {
+                const lowerName = file.name.toLowerCase();
+                return AUDIO_EXTENSIONS.some(ext => lowerName.endsWith(ext));
+            }).map(file => ({
+                name: file.name,
+                path: URL.createObjectURL(file),
+                isElectronFile: false,
+                rawFile: file
+            })).sort((a, b) => a.name.localeCompare(b.name));
+        }
+
+        if (btnWebFolder) {
+            btnWebFolder.addEventListener('click', async () => {
+                // File System Access API が使えるか確認
+                if ('showDirectoryPicker' in window) {
+                    try {
+                        const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+                        const tracks = await readAudioFilesFromHandle(dirHandle);
+                        if (tracks.length > 0) {
+                            playlistFiles = tracks;
+                            currentTrackIndex = -1;
+                            renderPlaylist();
+                            loadTrack(0);
+                            setTimeout(() => audio.play().catch(console.error), 100);
+                            // ハンドルをIndexedDBに保存して永続化
+                            await saveDirectoryHandle(dirHandle);
+                        }
+                    } catch (err) {
+                        if (err.name !== 'AbortError') console.error('Folder picker error:', err);
+                    }
+                } else {
+                    // フォールバック: webkitdirectory を使ったフォルダ選択
+                    folderInputFallback.click();
+                }
+            });
+        }
+
+        if (folderInputFallback) {
+            folderInputFallback.addEventListener('change', (e) => {
+                const tracks = filterAudioFiles(e.target.files);
+                if (tracks.length > 0) {
+                    playlistFiles = tracks;
+                    currentTrackIndex = -1;
+                    renderPlaylist();
                     loadTrack(0);
                     setTimeout(() => audio.play().catch(console.error), 100);
                 }
-                
-                e.target.value = ''; // 同じファイルを選べるようにリセット
+                e.target.value = '';
+            });
+        }
+
+        // 起動時に保存済みディレクトリハンドルから自動復元
+        if (!window.electronAPI && 'showDirectoryPicker' in window) {
+            window.addEventListener('load', async () => {
+                try {
+                    const savedHandle = await loadDirectoryHandle();
+                    if (!savedHandle) return;
+                    // ページ読み込み時に自動で権限確認
+                    const perm = await savedHandle.queryPermission({ mode: 'read' });
+                    if (perm === 'granted') {
+                        const tracks = await readAudioFilesFromHandle(savedHandle);
+                        if (tracks.length > 0) {
+                            playlistFiles = tracks;
+                            renderPlaylist();
+                            loadTrack(0);
+                        }
+                    }
+                    // perm === 'prompt' の場合はユーザーがフォルダボタンを押したときに再取得
+                } catch (e) {
+                    console.log('Auto-load from saved folder skipped:', e);
+                }
             });
         }
 
@@ -1749,6 +1865,9 @@
             if (file.isElectronFile) {
                 // Electron経由での絶対パス再生物理ファイル（URLエンコード処置）
                 audio.src = 'file:///' + encodeURI(file.path.replace(/\\/g, '/')).replace(/#/g, '%23').replace(/\?/g, '%3F');
+            } else if (file.path) {
+                // Web環境: 既に生成済みのblob URLを使用
+                audio.src = file.path;
             } else {
                 audio.src = URL.createObjectURL(file);
             }
