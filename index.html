@@ -1095,8 +1095,8 @@
                 </label>
             </div>
             <div class="row">
-                <span class="material-symbols-rounded" style="font-size: 16px;">compare_arrows</span>
-                <input type="range" id="slider-pan" min="-1" max="1" step="0.01" value="0" disabled>
+                <span>空間 (Reverb)</span>
+                <input type="range" id="slider-reverb" min="0" max="1" step="0.01" value="0.3" disabled>
             </div>
             <div class="row">
                 <span>Auto-Pan (自動移動)</span>
@@ -1151,7 +1151,7 @@
         const btn3d = document.getElementById('btn-3d');
         const panel3d = document.getElementById('panel-3d');
         const toggle3dEffect = document.getElementById('toggle-3d-effect');
-        const sliderPan = document.getElementById('slider-pan');
+        const sliderReverb = document.getElementById('slider-reverb');
         const toggleAutoPan = document.getElementById('toggle-auto-pan');
         
         const btnEq = document.getElementById('btn-eq');
@@ -1326,9 +1326,9 @@
         // 3D Nodes
         let pannerNode;
         let filterNode;
-        let gainNode;
-        let crossfeedDelay;
-        let crossfeedGain;
+        let dryGainNode;
+        let wetGainNode;
+        let convolverNode;
         // EQ Nodes
         let eqBass;
         let eqMid;
@@ -1340,6 +1340,21 @@
         let panDirection = 1;
         let autoPanAnimFrame;
 
+        function createReverbIR(ctx) {
+            const sampleRate = ctx.sampleRate;
+            const length = sampleRate * 2.5; // 2.5秒の残響
+            const impulse = ctx.createBuffer(2, length, sampleRate);
+            const left = impulse.getChannelData(0);
+            const right = impulse.getChannelData(1);
+            for (let i = 0; i < length; i++) {
+                // 指数減衰によるホワイトノイズ（簡略化された部屋・ホールのIR）
+                const decay = Math.exp(-i / (sampleRate * 0.5));
+                left[i] = (Math.random() * 2 - 1) * decay;
+                right[i] = (Math.random() * 2 - 1) * decay;
+            }
+            return impulse;
+        }
+
         /** 初回操作時にAudioContextを初期化する（ブラウザの静音ポリシー対策） */
         function initWebAudio() {
             if (audioCtx) return;
@@ -1349,18 +1364,38 @@
             // 既存の <audio> 要素から音源を生成
             sourceNode = audioCtx.createMediaElementSource(audio);
             
-            // ====== 3D Audio (StereoPanner + Crossfeed) ======
-            pannerNode = audioCtx.createStereoPanner();
-            
-            // クロスフィード用: 左右の音を微小な遅延で混ぜることで立体感を演出
-            crossfeedDelay = audioCtx.createDelay(0.05);
-            crossfeedDelay.delayTime.value = 0.0003; // 0.3ms のITD（耳間時間差）
-            crossfeedGain = audioCtx.createGain();
-            crossfeedGain.gain.value = 0; // 初期値OFF（3D ON時に有効化）
+            // ====== 3D Audio (HRTF + Reverb) ======
+            pannerNode = audioCtx.createPanner();
+            pannerNode.panningModel = 'HRTF';
+            pannerNode.distanceModel = 'inverse';
+            pannerNode.refDistance = 1;
+            pannerNode.maxDistance = 10000;
+            pannerNode.rolloffFactor = 1;
+
+            const listener = audioCtx.listener;
+            if (listener.positionX) {
+                listener.positionX.value = 0;
+                listener.positionY.value = 0;
+                listener.positionZ.value = 0;
+                listener.forwardX.value = 0;
+                listener.forwardY.value = 0;
+                listener.forwardZ.value = -1;
+                listener.upX.value = 0;
+                listener.upY.value = 1;
+                listener.upZ.value = 0;
+            } else {
+                listener.setPosition(0,0,0);
+                listener.setOrientation(0,0,-1, 0,1,0); 
+            }
+
+            convolverNode = audioCtx.createConvolver();
+            convolverNode.buffer = createReverbIR(audioCtx);
 
             filterNode = audioCtx.createBiquadFilter();
             filterNode.type = 'lowpass';
-            gainNode = audioCtx.createGain();
+            dryGainNode = audioCtx.createGain();
+            wetGainNode = audioCtx.createGain();
+            wetGainNode.gain.value = 0;
 
             // ====== Equalizer ======
             eqBass = audioCtx.createBiquadFilter();
@@ -1392,9 +1427,9 @@
             sourceNode.disconnect();
             try { filterNode.disconnect(); } catch(e){}
             try { pannerNode.disconnect(); } catch(e){}
-            try { gainNode.disconnect(); } catch(e){}
-            try { crossfeedDelay.disconnect(); } catch(e){}
-            try { crossfeedGain.disconnect(); } catch(e){}
+            try { dryGainNode.disconnect(); } catch(e){}
+            try { wetGainNode.disconnect(); } catch(e){}
+            try { convolverNode.disconnect(); } catch(e){}
             try { eqBass.disconnect(); } catch(e){}
             try { eqMid.disconnect(); } catch(e){}
             try { eqTreble.disconnect(); } catch(e){}
@@ -1407,59 +1442,79 @@
             eqMid.connect(eqTreble);
 
             if (is3DEnabled) {
-                // 3D効果ON：EQ出力 -> フィルター -> パンナー + クロスフィード -> ゲイン -> 出力
+                // 3D効果ON: EQ -> Filter -> Panner -> [Dry/Wet] -> Destination
                 eqTreble.connect(filterNode);
                 filterNode.connect(pannerNode);
-                pannerNode.connect(gainNode);
-                // クロスフィード: パンナー出力を微遅延で混ぜて立体感UP
-                pannerNode.connect(crossfeedDelay);
-                crossfeedDelay.connect(crossfeedGain);
-                crossfeedGain.connect(gainNode);
-                gainNode.connect(audioCtx.destination);
 
-                // パラメータのアニメーション予約をキャンセルして適用
+                pannerNode.connect(dryGainNode);
+                dryGainNode.connect(audioCtx.destination);
+
+                pannerNode.connect(convolverNode);
+                convolverNode.connect(wetGainNode);
+                wetGainNode.connect(audioCtx.destination);
+
                 filterNode.frequency.cancelScheduledValues(now);
-                gainNode.gain.cancelScheduledValues(now);
-                pannerNode.pan.cancelScheduledValues(now);
+                dryGainNode.gain.cancelScheduledValues(now);
+                wetGainNode.gain.cancelScheduledValues(now);
+                if (pannerNode.positionX) {
+                    pannerNode.positionX.cancelScheduledValues(now);
+                    pannerNode.positionZ.cancelScheduledValues(now);
+                }
 
-                // 距離感を出すために軽く高音を削り、少し音量を下げる
-                filterNode.frequency.setTargetAtTime(12000, now, 0.1);
-                gainNode.gain.setTargetAtTime(0.95, now, 0.1);
-                crossfeedGain.gain.setTargetAtTime(0.15, now, 0.1);
+                // 空間の奥行きを出すため高音を適度にカット
+                filterNode.frequency.setTargetAtTime(10000, now, 0.1);
                 
-                sliderPan.disabled = isAutoPan;
+                sliderReverb.disabled = false;
+                const reverbVal = parseFloat(sliderReverb.value);
+                // ドライ音量（元音）とウェット音量（残響）を調整
+                dryGainNode.gain.setTargetAtTime(1.0 - (reverbVal * 0.3), now, 0.1);
+                wetGainNode.gain.setTargetAtTime(reverbVal * 1.5, now, 0.1);
+                
                 toggleAutoPan.disabled = false;
                 
                 if (isAutoPan) {
                     startAutoPan();
                 } else {
                     stopAutoPan();
-                    pannerNode.pan.setTargetAtTime(parseFloat(sliderPan.value), now, 0.05);
+                    updatePannerPosition(panValue); // 現在の角度を維持
                 }
             } else {
                 // 3D効果OFF：EQ出力をそのままDestinationへ
-                crossfeedGain.gain.value = 0;
                 eqTreble.connect(audioCtx.destination);
                 
-                sliderPan.disabled = true;
+                sliderReverb.disabled = true;
                 toggleAutoPan.disabled = true;
                 stopAutoPan();
+            }
+        }
+
+        function updatePannerPosition(val) {
+            if (!pannerNode || !audioCtx) return;
+            // -1 〜 1 の値を、リスナー周囲の円軌道（半径3）に変換
+            // theta を -π 〜 π にして1周させる
+            const theta = val * Math.PI;
+            const radius = 3;
+            const x = Math.sin(theta) * radius;
+            const z = -Math.cos(theta) * radius; // 0のときz=-3(前方), 1のときz=3(後方)
+            const now = audioCtx.currentTime;
+            
+            if (pannerNode.positionX) {
+                pannerNode.positionX.setTargetAtTime(x, now, 0.05);
+                pannerNode.positionY.setTargetAtTime(0, now, 0.05);
+                pannerNode.positionZ.setTargetAtTime(z, now, 0.05);
+            } else {
+                pannerNode.setPosition(x, 0, z);
             }
         }
 
         function autoPanLoop() {
             if (!is3DEnabled || !isAutoPan) return;
             
-            // 非常になめらかに左右を往復させる
-            panValue += 0.003 * panDirection;
-            if (panValue >= 1) { panValue = 1; panDirection = -1; }
-            if (panValue <= -1) { panValue = -1; panDirection = 1; }
+            // リスナーの周りをゆっくり1周し続ける
+            panValue += 0.002;
+            if (panValue > 1) { panValue = -1; } // ループ
             
-            pannerNode.pan.value = panValue;
-            
-            // スライダーUIも連動して動かす
-            sliderPan.value = panValue;
-            updateSliderBackground(sliderPan, (panValue + 1) / 2);
+            updatePannerPosition(panValue);
             
             autoPanAnimFrame = requestAnimationFrame(autoPanLoop);
         }
@@ -1512,10 +1567,13 @@
             updateAudioRouting();
         });
 
-        sliderPan.addEventListener('input', (e) => {
-            if (is3DEnabled && !isAutoPan && audioCtx) {
-                updateSliderBackground(e.target, (parseFloat(e.target.value) + 1) / 2);
-                pannerNode.pan.setTargetAtTime(parseFloat(e.target.value), audioCtx.currentTime, 0.05);
+        sliderReverb.addEventListener('input', (e) => {
+            if (is3DEnabled && audioCtx) {
+                const val = parseFloat(e.target.value);
+                updateSliderBackground(e.target, val);
+                const now = audioCtx.currentTime;
+                dryGainNode.gain.setTargetAtTime(1.0 - (val * 0.3), now, 0.1);
+                wetGainNode.gain.setTargetAtTime(val * 1.5, now, 0.1);
             }
         });
 
