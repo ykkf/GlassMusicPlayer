@@ -1109,12 +1109,18 @@
 
         <!-- プレイリスト (初期非表示) -->
         <div class="playlist-section" id="playlist-section">
-            <div class="file-input-wrapper">
-                <!-- Electronのみ表示されるフォルダ参照ボタン（PWA環境対応等で最低限残す必要があれば分岐も可能ですが、PC版専用とするため主役にします） -->
-                <button class="btn-folder" id="btn-select-folder" style="display: none;">
+            <div class="file-input-wrapper" style="display: flex; gap: 8px; padding: 0 4px;">
+                <!-- Electronのみ表示されるフォルダ参照ボタン -->
+                <button class="btn-folder" id="btn-select-folder" style="display: none; flex: 1;">
                     <span class="material-symbols-rounded">folder_open</span>
-                    Select Music Folder
+                    Music Folder
                 </button>
+                <!-- PC以外のWeb環境用 ファイル追加ボタン -->
+                <button class="btn-folder" id="btn-add-files" style="flex: 1;">
+                    <span class="material-symbols-rounded">add_circle</span>
+                    Add Music
+                </button>
+                <input type="file" id="file-input" multiple accept="audio/*" style="display: none;">
             </div>
             <ul class="playlist" id="playlist">
                 <!-- 曲一覧がJavaScriptで追加されます -->
@@ -1180,10 +1186,13 @@
         let isAlwaysOnTop = false;
         
         const btnSelectFolder = document.getElementById('btn-select-folder');
+        const btnAddFiles = document.getElementById('btn-add-files');
+        const fileInput = document.getElementById('file-input');
 
         if (window.electronAPI) {
-            // Electron機能を利用可能な場合、ボタンを表示
+            // Electron機能を利用可能な場合、ボタンを表示し代替を隠す
             if (btnSelectFolder) btnSelectFolder.style.display = 'flex';
+            if (btnAddFiles) btnAddFiles.style.display = 'none';
             
             btnMinimize.addEventListener('click', () => window.electronAPI.minimize());
             btnClose.addEventListener('click', () => window.electronAPI.close());
@@ -1250,6 +1259,35 @@
             // ブラウザ環境ではウィンドウコントロールを非表示にする
             const controls = document.querySelector('.window-controls');
             if (controls) controls.style.display = 'none';
+        }
+
+        // PWA・ブラウザアプリ用のローカルファイルアップロード処理
+        if (btnAddFiles && fileInput) {
+            btnAddFiles.addEventListener('click', () => fileInput.click());
+            
+            fileInput.addEventListener('change', (e) => {
+                const files = Array.from(e.target.files);
+                if (files.length === 0) return;
+                
+                const newTracks = files.map(file => {
+                    return {
+                        name: file.name.replace(/\.[^/.]+$/, ""),
+                        path: URL.createObjectURL(file), // blob URL生成
+                        isElectronFile: false,
+                        rawFile: file // ID3タグ動的解析用に保持
+                    };
+                });
+                
+                playlistFiles = [...playlistFiles, ...newTracks];
+                renderPlaylist();
+                
+                if (currentTrackIndex === -1) {
+                    loadTrack(0);
+                    setTimeout(() => audio.play().catch(console.error), 100);
+                }
+                
+                e.target.value = ''; // 同じファイルを選べるようにリセット
+            });
         }
 
         // デザイン・システム設定
@@ -1773,7 +1811,7 @@
                         .catch(e => console.log('Fetch error for local cover art: ', e));
                 } else {
                     // 通常のローカルブラウザアップロードファイル
-                    window.jsmediatags.read(file, {
+                    window.jsmediatags.read(file.rawFile || file, {
                         onSuccess: function(tag) { handleID3Tags(tag.tags, trackNameEl.textContent); },
                         onError: function(e) { console.log('ID3 読み込みスキップ: ', e); }
                     });
