@@ -1415,16 +1415,103 @@
         // =========================================================
         // イベントリスナーの登録
         // =========================================================
+
+        // --- バックグラウンド・スリープ時再生維持 ---
+        let userIntentPaused = false;
+        let bgKeepAliveTimer = null;
+        let webLockHeld = null; // Web Locks API のリリース用
+
         if ('mediaSession' in navigator) {
-            navigator.mediaSession.setActionHandler('play', togglePlay);
-            navigator.mediaSession.setActionHandler('pause', togglePlay);
+            navigator.mediaSession.setActionHandler('play', () => {
+                userIntentPaused = false;
+                if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+                togglePlay();
+            });
+            navigator.mediaSession.setActionHandler('pause', () => {
+                userIntentPaused = true;
+                togglePlay();
+            });
             navigator.mediaSession.setActionHandler('previoustrack', playPrev);
             navigator.mediaSession.setActionHandler('nexttrack', playNext);
         }
 
-        playBtn.addEventListener('click', togglePlay);
-        prevBtn.addEventListener('click', playPrev);
-        nextBtn.addEventListener('click', playNext);
+        // ページがバックグラウンド/フォアグラウンド切替時にAudioContextを復帰
+        document.addEventListener('visibilitychange', () => {
+            if (!audioCtx) return;
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume().catch(() => {});
+            }
+            if (document.visibilityState === 'visible' && !userIntentPaused && audio.paused && playlistFiles.length > 0) {
+                audio.play().catch(() => {});
+            }
+        });
+
+        // AudioContextのstate変化を監視して自動復帰
+        function watchAudioContextState() {
+            if (!audioCtx) return;
+            audioCtx.addEventListener('statechange', () => {
+                if (audioCtx.state === 'suspended' && !audio.paused) {
+                    audioCtx.resume().catch(() => {});
+                }
+            });
+        }
+
+        /**
+         * Web Locks API でブラウザにページのサスペンドを抑制させる
+         * 再生開始時に取得し、一時停止時に解放する
+         */
+        function acquireWebLock() {
+            if (webLockHeld || !navigator.locks) return;
+            navigator.locks.request('glass-music-playback', { mode: 'exclusive' }, () => {
+                return new Promise((resolve) => {
+                    webLockHeld = resolve; // resolveを呼べばロック解放
+                });
+            }).catch(() => {});
+        }
+        function releaseWebLock() {
+            if (webLockHeld) {
+                webLockHeld();
+                webLockHeld = null;
+            }
+        }
+
+        /**
+         * 定期的にAudioContextを復帰させるタイマー
+         * スリープから復帰した際にも安定して再開させる
+         */
+        function startKeepAlive() {
+            stopKeepAlive();
+            acquireWebLock();
+            bgKeepAliveTimer = setInterval(() => {
+                if (audioCtx && audioCtx.state === 'suspended' && !userIntentPaused) {
+                    audioCtx.resume().catch(() => {});
+                }
+                // audio要素がブラウザにより停止されていたら再開
+                if (!userIntentPaused && audio.paused && audio.src && playlistFiles.length > 0) {
+                    audio.play().catch(() => {});
+                }
+            }, 3000); // 3秒ごとにチェック
+        }
+        function stopKeepAlive() {
+            if (bgKeepAliveTimer) {
+                clearInterval(bgKeepAliveTimer);
+                bgKeepAliveTimer = null;
+            }
+            releaseWebLock();
+        }
+
+        // 再生開始/停止に連動してキープアライブを制御
+        audio.addEventListener('play', () => { startKeepAlive(); });
+        audio.addEventListener('pause', () => {
+            if (userIntentPaused) stopKeepAlive();
+        });
+
+        playBtn.addEventListener('click', () => {
+            userIntentPaused = audio.paused ? false : true;
+            togglePlay();
+        });
+        prevBtn.addEventListener('click', () => { userIntentPaused = false; playPrev(); });
+        nextBtn.addEventListener('click', () => { userIntentPaused = false; playNext(); });
         shuffleBtn.addEventListener('click', () => {
             isShuffle = !isShuffle;
             shuffleBtn.classList.toggle('active', isShuffle);
@@ -1433,11 +1520,10 @@
         seekBar.addEventListener('input', seekTo);
         volumeBar.addEventListener('input', updateVolume);
         
-        // プレイリストの表示切り替え（ホバー時に少し色も変えるのはCSSで対応）
         playlistToggle.addEventListener('click', () => {
             playlistSection.classList.toggle('show');
             if (playlistSection.classList.contains('show')) {
-                playlistToggle.style.color = 'var(--accent)'; // アクセントカラーで強調
+                playlistToggle.style.color = 'var(--accent)';
                 playlistToggle.style.background = 'rgba(255,255,255,0.12)';
             } else {
                 playlistToggle.style.color = '';
@@ -1451,7 +1537,7 @@
             seekBar.max = audio.duration || 100;
             durationEl.textContent = formatTime(audio.duration || 0);
         });
-        audio.addEventListener('ended', playNext);
+        audio.addEventListener('ended', () => { userIntentPaused = false; playNext(); });
         
         audio.addEventListener('play', syncPlayState);
         audio.addEventListener('pause', syncPlayState);
@@ -1566,7 +1652,10 @@
             eqTreble.frequency.value = 4000; // 4kHz以上の高音
 
             // 初期状態はソースからDestinationへ直接出力 (ルーティング更新前)
-            sourceNode.connect(audioCtx.destination); 
+            sourceNode.connect(audioCtx.destination);
+
+            // AudioContextの中断を監視して自動復帰
+            watchAudioContextState();
         }
 
         function updateAudioRouting() {
