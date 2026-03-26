@@ -26,6 +26,7 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js'), // preload スクリプト
             contextIsolation: true,   // レンダラーとメインプロセスを分離
             nodeIntegration: false,   // レンダラーで Node.js を使わない（セキュリティ）
+            webSecurity: false,       // file:// プロトコルへのXHRアクセスを許可 (Electronファイル読込用)
         },
 
         // アイコン設定

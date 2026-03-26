@@ -222,16 +222,15 @@
             border: 1px solid rgba(255, 255, 255, 0.15); /* 少し明るいボーダー */
             border-top: 1px solid rgba(255, 255, 255, 0.25); /* 上部ハイライトを強めに */
             border-radius: 28px;
-            padding: 40px 32px 32px;
+            padding: 56px 32px 32px; /* 上部パディングを増やしウィンドウコントロールとの被りを防止 */
             box-shadow: 
-                0 40px 80px rgba(0, 0, 0, 0.65),
-                0 0 0 1px rgba(255, 255, 255, 0.06), /* 薄い外側ライン */
+                0 0 0 1px rgba(255, 255, 255, 0.05), /* 薄い外側ラインのみ残す */
                 inset 0 1px 0 rgba(255, 255, 255, 0.12), /* 上部のハイライト */
                 inset 0 -1px 0 rgba(0, 0, 0, 0.2), /* 下部の影 */
                 inset 0 0 60px rgba(255, 255, 255, 0.03); /* 内側の微かな光 */
             display: flex;
             flex-direction: column;
-            gap: 28px;
+            gap: 24px; /* パディング増加分、隙間をやや詰める */
             transition: transform 0.4s cubic-bezier(0.165, 0.84, 0.44, 1),
                         box-shadow 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
             margin-top: 20px;
@@ -244,7 +243,6 @@
         .player-card:hover {
             transform: translateY(-3px);
             box-shadow: 
-                0 50px 90px rgba(0, 0, 0, 0.7),
                 0 0 0 1px rgba(255, 255, 255, 0.08),
                 inset 0 1px 0 rgba(255, 255, 255, 0.18),
                 inset 0 -1px 0 rgba(0, 0, 0, 0.2),
@@ -596,6 +594,78 @@
         }
 
         /* =========================================================
+           EQ パネル
+           ========================================================= */
+        .panel-eq {
+            display: none;
+            flex-direction: column;
+            gap: 12px;
+            padding: 14px;
+            background: rgba(40, 40, 40, 0.6);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 12px;
+            position: absolute;
+            bottom: 60px;
+            right: 20px;
+            width: 280px;
+            z-index: 100;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            animation: fadeIn 0.2s ease-out forwards;
+        }
+        .panel-eq.show {
+            display: flex;
+        }
+        .preset-row {
+            display: flex;
+            gap: 6px;
+            justify-content: space-between;
+        }
+        .preset-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            font-size: 11px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex: 1;
+        }
+        .preset-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: var(--text-primary);
+        }
+        .preset-btn.active {
+            background: rgba(0, 229, 255, 0.2);
+            border-color: rgba(0, 229, 255, 0.5);
+            color: var(--accent);
+        }
+        
+        .eq-sliders {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .eq-slider-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .eq-slider-wrapper label {
+            width: 45px;
+        }
+        .eq-slider-wrapper input[type="range"] {
+            flex-grow: 1;
+            margin-left: 8px;
+            height: 4px;
+        }
+
+        /* =========================================================
            プレイリストセクション (折りたたみ式)
            ========================================================= */
         .playlist-section {
@@ -622,38 +692,42 @@
             justify-content: center;
         }
 
-        .file-input-wrapper input[type="file"] {
-            display: none;
-        }
-
-        /* ファイル追加・フォルダ参照ボタン (シンプルに) */
-        .file-input-wrapper label, .btn-folder {
-            background: rgba(255,255,255,0.03);
-            border: 1px dashed rgba(255,255,255,0.2);
-            padding: 12px 0;
+        /* フォルダ参照ボタン (大きく押しやすく) */
+        .btn-folder {
+            background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 14px 0;
             width: 100%;
             text-align: center;
-            border-radius: 14px;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--text-secondary);
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
             display: flex;
             justify-content: center;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
         }
 
-        .file-input-wrapper label:hover, .btn-folder:hover {
+        .btn-folder:hover {
             color: var(--accent);
-            border-color: rgba(255,255,255,0.5);
+            border-color: rgba(0, 229, 255, 0.4);
             background: rgba(255,255,255,0.08);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            box-shadow: 0 6px 20px rgba(0, 229, 255, 0.15);
+            transform: translateY(-2px);
         }
         
-        .file-input-wrapper label .material-symbols-rounded, .btn-folder .material-symbols-rounded {
-            font-size: 18px;
+        .btn-folder:active {
+            transform: translateY(1px);
+        }
+        
+        .btn-folder .material-symbols-rounded {
+            font-size: 20px;
         }
 
         .playlist {
@@ -968,6 +1042,14 @@
             </div>
             
             <div style="display: flex; gap: 4px;">
+                <!-- シャッフル -->
+                <button class="playlist-toggle" id="shuffle-btn" title="Shuffle">
+                    <span class="material-symbols-rounded">shuffle</span>
+                </button>
+                <!-- EQ トグル -->
+                <button class="playlist-toggle" id="btn-eq" title="Equalizer (EQ)">
+                    <span class="material-symbols-rounded">graphic_eq</span>
+                </button>
                 <!-- 3D Audio トグル -->
                 <button class="playlist-toggle" id="btn-3d" title="3D Audio (立体音響)">
                     <span class="material-symbols-rounded">spatial_audio</span>
@@ -975,6 +1057,31 @@
                 <button class="playlist-toggle" id="playlist-toggle" title="Toggle Playlist">
                     <span class="material-symbols-rounded">queue_music</span>
                 </button>
+            </div>
+        </div>
+
+        <!-- EQ パネル (初期非表示) -->
+        <div class="panel-eq" id="panel-eq">
+            <div class="preset-row">
+                <button class="preset-btn active" data-preset="normal">Normal</button>
+                <button class="preset-btn" data-preset="bass">Bass</button>
+                <button class="preset-btn" data-preset="vocal">Vocal</button>
+                <button class="preset-btn" data-preset="treble">Treble</button>
+            </div>
+            
+            <div class="eq-sliders">
+                <div class="eq-slider-wrapper">
+                    <label>Bass</label>
+                    <input type="range" class="eq-slider" id="eq-bass" min="-10" max="10" step="0.1" value="0">
+                </div>
+                <div class="eq-slider-wrapper">
+                    <label>Mid</label>
+                    <input type="range" class="eq-slider" id="eq-mid" min="-10" max="10" step="0.1" value="0">
+                </div>
+                <div class="eq-slider-wrapper">
+                    <label>Treble</label>
+                    <input type="range" class="eq-slider" id="eq-treble" min="-10" max="10" step="0.1" value="0">
+                </div>
             </div>
         </div>
 
@@ -1003,13 +1110,8 @@
         <!-- プレイリスト (初期非表示) -->
         <div class="playlist-section" id="playlist-section">
             <div class="file-input-wrapper">
-                <input type="file" id="file-input" multiple accept="audio/mpeg, audio/mp3, audio/flac, audio/wav, audio/ogg">
-                <label for="file-input">
-                    <span class="material-symbols-rounded">add</span>
-                    Add Local Files
-                </label>
-                <!-- Electronのみ表示されるフォルダ参照ボタン -->
-                <button class="btn-folder" id="btn-select-folder" style="display: none; border-style: solid;">
+                <!-- Electronのみ表示されるフォルダ参照ボタン（PWA環境対応等で最低限残す必要があれば分岐も可能ですが、PC版専用とするため主役にします） -->
+                <button class="btn-folder" id="btn-select-folder" style="display: none;">
                     <span class="material-symbols-rounded">folder_open</span>
                     Select Music Folder
                 </button>
@@ -1030,7 +1132,6 @@
         let currentTrackIndex = -1;
 
         // UI要素
-        const fileInput = document.getElementById('file-input');
         const playlistEl = document.getElementById('playlist');
         const playlistSection = document.getElementById('playlist-section');
         const playlistToggle = document.getElementById('playlist-toggle');
@@ -1039,6 +1140,8 @@
         const playIcon = document.getElementById('play-icon');
         const prevBtn = document.getElementById('prev-btn');
         const nextBtn = document.getElementById('next-btn');
+        const shuffleBtn = document.getElementById('shuffle-btn');
+        let isShuffle = false;
         const seekBar = document.getElementById('seek-bar');
         const volumeBar = document.getElementById('volume-bar');
         const volIcon = document.getElementById('vol-icon');
@@ -1050,6 +1153,13 @@
         const toggle3dEffect = document.getElementById('toggle-3d-effect');
         const sliderPan = document.getElementById('slider-pan');
         const toggleAutoPan = document.getElementById('toggle-auto-pan');
+        
+        const btnEq = document.getElementById('btn-eq');
+        const panelEq = document.getElementById('panel-eq');
+        const presetBtns = document.querySelectorAll('.preset-btn');
+        const eqBassSlider = document.getElementById('eq-bass');
+        const eqMidSlider = document.getElementById('eq-mid');
+        const eqTrebleSlider = document.getElementById('eq-treble');
         
         const trackNameEl = document.getElementById('track-name');
         const artistNameEl = document.getElementById('artist-name');
@@ -1125,13 +1235,15 @@
                 }
             });
 
-            // 起動時に保存されたフォルダがあれば読み込む
-            window.electronAPI.getSavedFolder().then(files => {
-                if (files && files.length > 0) {
-                    playlistFiles = files;
-                    renderPlaylist();
-                    loadTrack(0);
-                }
+            // 起動時に保存されたフォルダがあれば読み込む (jsmediatagsロード完了を待つ)
+            window.addEventListener('load', () => {
+                window.electronAPI.getSavedFolder().then(files => {
+                    if (files && files.length > 0) {
+                        playlistFiles = files;
+                        renderPlaylist();
+                        loadTrack(0);
+                    }
+                });
             });
 
         } else {
@@ -1156,10 +1268,14 @@
             navigator.mediaSession.setActionHandler('nexttrack', playNext);
         }
 
-        fileInput.addEventListener('change', handleFiles);
         playBtn.addEventListener('click', togglePlay);
         prevBtn.addEventListener('click', playPrev);
         nextBtn.addEventListener('click', playNext);
+        shuffleBtn.addEventListener('click', () => {
+            isShuffle = !isShuffle;
+            shuffleBtn.classList.toggle('active', isShuffle);
+            shuffleBtn.style.color = isShuffle ? 'var(--accent)' : '';
+        });
         seekBar.addEventListener('input', seekTo);
         volumeBar.addEventListener('input', updateVolume);
         
@@ -1203,13 +1319,21 @@
         }
 
         // =========================================================
-        // 3D Audio (Web Audio API) 実装
+        // 3D Audio & EQ (Web Audio API) 実装
         // =========================================================
         let audioCtx;
         let sourceNode;
+        // 3D Nodes
         let pannerNode;
         let filterNode;
         let gainNode;
+        let crossfeedDelay;
+        let crossfeedGain;
+        // EQ Nodes
+        let eqBass;
+        let eqMid;
+        let eqTreble;
+
         let is3DEnabled = false;
         let isAutoPan = false;
         let panValue = 0;
@@ -1225,22 +1349,38 @@
             // 既存の <audio> 要素から音源を生成
             sourceNode = audioCtx.createMediaElementSource(audio);
             
-            // 左右のパン（広がり・位置）を制御するノード
+            // ====== 3D Audio (StereoPanner + Crossfeed) ======
             pannerNode = audioCtx.createStereoPanner();
             
-            // 距離感（奥行き）を表現するためのローパスフィルター
+            // クロスフィード用: 左右の音を微小な遅延で混ぜることで立体感を演出
+            crossfeedDelay = audioCtx.createDelay(0.05);
+            crossfeedDelay.delayTime.value = 0.0003; // 0.3ms のITD（耳間時間差）
+            crossfeedGain = audioCtx.createGain();
+            crossfeedGain.gain.value = 0; // 初期値OFF（3D ON時に有効化）
+
             filterNode = audioCtx.createBiquadFilter();
             filterNode.type = 'lowpass';
-            
-            // 微妙な音量減衰で距離感を出すためのゲインノード
             gainNode = audioCtx.createGain();
 
-            // Web Audio初期化段階では、is3DEnabledがフラグに準じて接続を決定する
-            // 呼び出し後に update3DState() が実行される想定のため、ここでは何もしないかそのまま繋ぐ
-            sourceNode.connect(audioCtx.destination); // 初期状態はTrue Bypass
+            // ====== Equalizer ======
+            eqBass = audioCtx.createBiquadFilter();
+            eqBass.type = 'lowshelf';
+            eqBass.frequency.value = 150; // 150Hz以下の低音
+
+            eqMid = audioCtx.createBiquadFilter();
+            eqMid.type = 'peaking';
+            eqMid.frequency.value = 1000; // 1kHzの中音
+            eqMid.Q.value = 1.0;
+
+            eqTreble = audioCtx.createBiquadFilter();
+            eqTreble.type = 'highshelf';
+            eqTreble.frequency.value = 4000; // 4kHz以上の高音
+
+            // 初期状態はソースからDestinationへ直接出力 (ルーティング更新前)
+            sourceNode.connect(audioCtx.destination); 
         }
 
-        function update3DState() {
+        function updateAudioRouting() {
             if (!audioCtx) return;
             
             // Contextがsuspend状態から復帰させる
@@ -1248,15 +1388,33 @@
                 audioCtx.resume();
             }
 
-            // 一度Sourceからの接続を全て切断（True Bypassの準備）
+            // 全て切断
             sourceNode.disconnect();
+            try { filterNode.disconnect(); } catch(e){}
+            try { pannerNode.disconnect(); } catch(e){}
+            try { gainNode.disconnect(); } catch(e){}
+            try { crossfeedDelay.disconnect(); } catch(e){}
+            try { crossfeedGain.disconnect(); } catch(e){}
+            try { eqBass.disconnect(); } catch(e){}
+            try { eqMid.disconnect(); } catch(e){}
+            try { eqTreble.disconnect(); } catch(e){}
+
             const now = audioCtx.currentTime;
 
+            // ルーティング再構築: Source -> eqBass -> eqMid -> eqTreble
+            sourceNode.connect(eqBass);
+            eqBass.connect(eqMid);
+            eqMid.connect(eqTreble);
+
             if (is3DEnabled) {
-                // 3D効果ON：ノードを直列に繋ぎ直す
-                sourceNode.connect(filterNode);
+                // 3D効果ON：EQ出力 -> フィルター -> パンナー + クロスフィード -> ゲイン -> 出力
+                eqTreble.connect(filterNode);
                 filterNode.connect(pannerNode);
                 pannerNode.connect(gainNode);
+                // クロスフィード: パンナー出力を微遅延で混ぜて立体感UP
+                pannerNode.connect(crossfeedDelay);
+                crossfeedDelay.connect(crossfeedGain);
+                crossfeedGain.connect(gainNode);
                 gainNode.connect(audioCtx.destination);
 
                 // パラメータのアニメーション予約をキャンセルして適用
@@ -1265,10 +1423,11 @@
                 pannerNode.pan.cancelScheduledValues(now);
 
                 // 距離感を出すために軽く高音を削り、少し音量を下げる
-                filterNode.frequency.setTargetAtTime(8000, now, 0.1); 
+                filterNode.frequency.setTargetAtTime(12000, now, 0.1);
                 gainNode.gain.setTargetAtTime(0.95, now, 0.1);
+                crossfeedGain.gain.setTargetAtTime(0.15, now, 0.1);
                 
-                sliderPan.disabled = isAutoPan; // オートパン時は手動スライダーをロック
+                sliderPan.disabled = isAutoPan;
                 toggleAutoPan.disabled = false;
                 
                 if (isAutoPan) {
@@ -1278,8 +1437,9 @@
                     pannerNode.pan.setTargetAtTime(parseFloat(sliderPan.value), now, 0.05);
                 }
             } else {
-                // 3D効果OFF：完全なバイパス状態（エフェクトを通さずにDestinationへ直結）
-                sourceNode.connect(audioCtx.destination);
+                // 3D効果OFF：EQ出力をそのままDestinationへ
+                crossfeedGain.gain.value = 0;
+                eqTreble.connect(audioCtx.destination);
                 
                 sliderPan.disabled = true;
                 toggleAutoPan.disabled = true;
@@ -1315,28 +1475,41 @@
             }
         }
 
-        // --- 3D Audio UI イベント ---
-        btn3d.addEventListener('click', () => {
+        // --- 3D & EQ Audio UI イベント ---
+        btn3d.addEventListener('click', (e) => {
+            e.stopPropagation();
             panel3d.classList.toggle('show');
-            if (panel3d.classList.contains('show')) {
-                btn3d.style.color = 'var(--accent)';
-            } else {
-                btn3d.style.color = '';
-            }
+            panelEq.classList.remove('show');
+            btn3d.style.color = panel3d.classList.contains('show') ? 'var(--accent)' : '';
+            btnEq.style.color = '';
         });
 
-        // パネル外クリックでパネルを閉じる
+        if (btnEq) {
+            btnEq.addEventListener('click', (e) => {
+                e.stopPropagation();
+                panelEq.classList.toggle('show');
+                panel3d.classList.remove('show');
+                btnEq.style.color = panelEq.classList.contains('show') ? 'var(--accent)' : '';
+                btn3d.style.color = '';
+            });
+        }
+
+        // パネル外クリックでパネル等を閉じる
         document.addEventListener('click', (e) => {
-            if (!panel3d.contains(e.target) && !btn3d.contains(e.target)) {
+            if (panel3d && !panel3d.contains(e.target) && !btn3d.contains(e.target)) {
                 panel3d.classList.remove('show');
                 btn3d.style.color = '';
+            }
+            if (panelEq && !panelEq.contains(e.target) && btnEq && !btnEq.contains(e.target)) {
+                panelEq.classList.remove('show');
+                btnEq.style.color = '';
             }
         });
 
         toggle3dEffect.addEventListener('change', (e) => {
             initWebAudio(); // ユーザーの操作を起点にInit
             is3DEnabled = e.target.checked;
-            update3DState();
+            updateAudioRouting();
         });
 
         sliderPan.addEventListener('input', (e) => {
@@ -1348,7 +1521,58 @@
 
         toggleAutoPan.addEventListener('change', (e) => {
             isAutoPan = e.target.checked;
-            update3DState();
+            updateAudioRouting();
+        });
+
+        // --- EQ スライダー・プリセット イベント ---
+        function updateEQSliderBackground(slider) {
+            // -10〜10を0〜100%にマッピング (-10 = 0%, 0 = 50%, 10 = 100%)
+            const percentage = ((parseFloat(slider.value) + 10) / 20) * 100;
+            slider.style.background = `linear-gradient(to right, rgba(0, 229, 255, 0.5) ${percentage}%, var(--track-bg) ${percentage}%)`;
+        }
+
+        [eqBassSlider, eqMidSlider, eqTrebleSlider].forEach(slider => {
+            if(!slider) return;
+            updateEQSliderBackground(slider);
+            slider.addEventListener('input', (e) => {
+                initWebAudio();
+                updateEQSliderBackground(e.target);
+                const val = parseFloat(e.target.value);
+                
+                if (e.target.id === 'eq-bass' && eqBass) eqBass.gain.value = val;
+                if (e.target.id === 'eq-mid' && eqMid) eqMid.gain.value = val;
+                if (e.target.id === 'eq-treble' && eqTreble) eqTreble.gain.value = val;
+                
+                // 手動操作時、プリセットを外す
+                presetBtns.forEach(b => b.classList.remove('active'));
+            });
+        });
+
+        const presets = {
+            normal: { bass: 0, mid: 0, treble: 0 },
+            bass: { bass: 6, mid: -2, treble: 1 },
+            vocal: { bass: -2, mid: 5, treble: 2 },
+            treble: { bass: -2, mid: 1, treble: 5 }
+        };
+
+        presetBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                initWebAudio();
+                
+                presetBtns.forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                
+                const presetKey = e.target.getAttribute('data-preset');
+                const preset = presets[presetKey] || presets.normal;
+                
+                if (eqBassSlider) { eqBassSlider.value = preset.bass; updateEQSliderBackground(eqBassSlider); }
+                if (eqMidSlider) { eqMidSlider.value = preset.mid; updateEQSliderBackground(eqMidSlider); }
+                if (eqTrebleSlider) { eqTrebleSlider.value = preset.treble; updateEQSliderBackground(eqTrebleSlider); }
+                
+                if (eqBass) eqBass.gain.value = preset.bass;
+                if (eqMid) eqMid.gain.value = preset.mid;
+                if (eqTreble) eqTreble.gain.value = preset.treble;
+            });
         });
 
 
@@ -1357,25 +1581,7 @@
         // =========================================================
 
         /**
-         * 1. ファイル選択時の処理
-         */
-        function handleFiles(e) {
-            const files = Array.from(e.target.files);
-            if (files.length === 0) return;
-            
-            playlistFiles = [...playlistFiles, ...files];
-            renderPlaylist();
-            
-            if (currentTrackIndex === -1) {
-                loadTrack(0);
-                setTimeout(() => {
-                    audio.play().catch(console.error);
-                }, 100);
-            }
-        }
-
-        /**
-         * 2. プレイリストを画面に描画
+         * 1. プレイリストを画面に描画
          */
         function renderPlaylist() {
             playlistEl.innerHTML = '';
@@ -1464,44 +1670,56 @@
             // デフォルト情報でMedia Sessionを初期化
             updateMediaSessionMetadata(trackNameEl.textContent, "Unknown Artist", "", null);
             
-            // isElectronFile の場合は、jsmediatagsのファイルシステム外アクセス制限(CORS等)を回避するためID3読み込みをスキップする
-            if (window.jsmediatags && !file.isElectronFile) {
-                window.jsmediatags.read(file, {
-                    onSuccess: function(tag) {
-                        const tags = tag.tags;
-                        
-                        if (tags.title) trackNameEl.textContent = tags.title;
-                        if (tags.artist) artistNameEl.textContent = tags.artist;
-                        
-                        // 曲タイトルのツールチップ設定 (省略された場合用)
-                        trackNameEl.title = trackNameEl.textContent;
-                        artistNameEl.title = artistNameEl.textContent;
-                        
-                        let artworkUrl = null;
-                        if (tags.picture) {
-                            const { data, format } = tags.picture;
-                            const byteArray = new Uint8Array(data);
-                            const blob = new Blob([byteArray], { type: format });
-                            artworkUrl = URL.createObjectURL(blob);
-                            
-                            albumArtEl.onload = () => {
-                                albumArtEl.style.display = 'block';
-                                setTimeout(() => albumArtEl.style.opacity = '1', 50); // フェードイン
-                                albumPlaceholder.style.display = 'none';
-                            };
-                            albumArtEl.src = artworkUrl;
-                        }
+            // 共通のID3処理関数
+            const handleID3Tags = (tags, defaultTitle) => {
+                if (tags.title) trackNameEl.textContent = tags.title;
+                if (tags.artist) artistNameEl.textContent = tags.artist;
+                
+                trackNameEl.title = trackNameEl.textContent;
+                artistNameEl.title = artistNameEl.textContent;
+                
+                let artworkUrl = null;
+                if (tags.picture) {
+                    const { data, format } = tags.picture;
+                    const byteArray = new Uint8Array(data);
+                    const blob = new Blob([byteArray], { type: format });
+                    artworkUrl = URL.createObjectURL(blob);
+                    
+                    albumArtEl.onload = () => {
+                        albumArtEl.style.display = 'block';
+                        setTimeout(() => albumArtEl.style.opacity = '1', 50); // フェードイン
+                        albumPlaceholder.style.display = 'none';
+                    };
+                    albumArtEl.src = artworkUrl;
+                }
 
-                        // ID3タグから読み込んだ正確な情報でMedia Sessionを更新
-                        updateMediaSessionMetadata(
-                            tags.title || trackNameEl.textContent,
-                            tags.artist || "Unknown Artist",
-                            tags.album || "",
-                            artworkUrl
-                        );
-                    },
-                    onError: function(error) {}
-                });
+                updateMediaSessionMetadata(
+                    tags.title || defaultTitle,
+                    tags.artist || "Unknown Artist",
+                    tags.album || "",
+                    artworkUrl
+                );
+            };
+
+            if (window.jsmediatags) {
+                if (file.isElectronFile) {
+                    // Electronパスの場合はfetchでBlob化してjsmediatagsに渡す
+                    fetch(audio.src)
+                        .then(res => res.blob())
+                        .then(blob => {
+                            window.jsmediatags.read(blob, {
+                                onSuccess: function(tag) { handleID3Tags(tag.tags, trackNameEl.textContent); },
+                                onError: function(e) { console.log('ID3 読み込みスキップ: ', e); }
+                            });
+                        })
+                        .catch(e => console.log('Fetch error for local cover art: ', e));
+                } else {
+                    // 通常のローカルブラウザアップロードファイル
+                    window.jsmediatags.read(file, {
+                        onSuccess: function(tag) { handleID3Tags(tag.tags, trackNameEl.textContent); },
+                        onError: function(e) { console.log('ID3 読み込みスキップ: ', e); }
+                    });
+                }
             }
 
             renderPlaylist();
@@ -1542,8 +1760,21 @@
         function playNext() {
             if (playlistFiles.length === 0) return;
             let nextIndex = currentTrackIndex + 1;
-            if (nextIndex >= playlistFiles.length) {
-                nextIndex = 0;
+            
+            if (isShuffle) {
+                if (playlistFiles.length > 1) {
+                    let randIndex = currentTrackIndex;
+                    while(randIndex === currentTrackIndex) {
+                        randIndex = Math.floor(Math.random() * playlistFiles.length);
+                    }
+                    nextIndex = randIndex;
+                } else {
+                    nextIndex = 0;
+                }
+            } else {
+                if (nextIndex >= playlistFiles.length) {
+                    nextIndex = 0;
+                }
             }
             loadTrack(nextIndex);
             audio.play().catch(e => console.error(e));
@@ -1562,8 +1793,20 @@
             }
             
             let prevIndex = currentTrackIndex - 1;
-            if (prevIndex < 0) {
-                prevIndex = playlistFiles.length - 1;
+            if (isShuffle) {
+                if (playlistFiles.length > 1) {
+                    let randIndex = currentTrackIndex;
+                    while(randIndex === currentTrackIndex) {
+                        randIndex = Math.floor(Math.random() * playlistFiles.length);
+                    }
+                    prevIndex = randIndex;
+                } else {
+                    prevIndex = 0;
+                }
+            } else {
+                if (prevIndex < 0) {
+                    prevIndex = playlistFiles.length - 1;
+                }
             }
             loadTrack(prevIndex);
             audio.play().catch(e => console.error(e));
