@@ -1130,6 +1130,21 @@
 
     </div>
 
+    <!-- フォルダ復元用ダイアログ -->
+    <div id="resume-folder-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; justify-content:center; align-items:center; backdrop-filter:blur(5px);">
+        <div style="background:rgba(30, 35, 50, 0.9); padding:30px; border-radius:16px; text-align:center; border:1px solid rgba(255,255,255,0.1); width: 80%; max-width: 320px; box-shadow:0 10px 40px rgba(0,0,0,0.5);">
+            <div style="margin-bottom: 24px;">
+                <span class="material-symbols-rounded" style="font-size:48px; color:var(--accent);">folder_open</span>
+            </div>
+            <p style="color:var(--text-primary); margin-bottom:10px; font-weight: 500; font-size:16px;">前回のフォルダから再開</p>
+            <p style="color:var(--text-secondary); margin-bottom:24px; font-size:13px; line-height: 1.5;">前回再生していたフォルダがあります。続きから再生しますか？</p>
+            <div style="display:flex; gap:12px; justify-content:center;">
+                <button id="btn-cancel-resume" style="flex:1; padding:12px; border-radius:8px; background:transparent; border:1px solid rgba(255,255,255,0.2); color:var(--text-primary); cursor:pointer;">いいえ</button>
+                <button id="btn-resume-folder" style="flex:1; padding:12px; border-radius:8px; background:rgba(0,229,255,0.2); border:1px solid var(--accent); color:var(--accent); cursor:pointer; font-weight:600;">はい</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // =========================================================
         // アプリケーションの状態とDOM要素の取得
@@ -1385,6 +1400,10 @@
 
         // 起動時に保存済みディレクトリハンドルから自動復元
         if (!window.electronAPI && 'showDirectoryPicker' in window) {
+            const resumeOverlay = document.getElementById('resume-folder-overlay');
+            const btnResumeFolder = document.getElementById('btn-resume-folder');
+            const btnCancelResume = document.getElementById('btn-cancel-resume');
+
             window.addEventListener('load', async () => {
                 try {
                     const savedHandle = await loadDirectoryHandle();
@@ -1398,8 +1417,33 @@
                             renderPlaylist();
                             loadTrack(0);
                         }
+                    } else if (perm === 'prompt') {
+                        // ブラウザの仕様上、次回以降のアクセスにはユーザーアクションが必要
+                        resumeOverlay.style.display = 'flex';
+                        
+                        btnResumeFolder.addEventListener('click', async () => {
+                            try {
+                                const requestPerm = await savedHandle.requestPermission({ mode: 'read' });
+                                if (requestPerm === 'granted') {
+                                    const tracks = await readAudioFilesFromHandle(savedHandle);
+                                    if (tracks.length > 0) {
+                                        playlistFiles = tracks;
+                                        renderPlaylist();
+                                        loadTrack(0);
+                                        // 自動再生を試みる
+                                        setTimeout(() => audio.play().catch(console.error), 100);
+                                    }
+                                }
+                            } catch (err) {
+                                console.error('Resume folder permission error:', err);
+                            }
+                            resumeOverlay.style.display = 'none';
+                        }, { once: true });
+                        
+                        btnCancelResume.addEventListener('click', () => {
+                            resumeOverlay.style.display = 'none';
+                        }, { once: true });
                     }
-                    // perm === 'prompt' の場合はユーザーがフォルダボタンを押したときに再取得
                 } catch (e) {
                     console.log('Auto-load from saved folder skipped:', e);
                 }
@@ -1653,6 +1697,16 @@
 
             // 初期状態はソースからDestinationへ直接出力 (ルーティング更新前)
             sourceNode.connect(audioCtx.destination);
+
+            // Web Audio API のバックグラウンド停止を防ぐための無音オシレーター
+            const osc = audioCtx.createOscillator();
+            const silentGain = audioCtx.createGain();
+            osc.frequency.value = 1; // 1Hz (可聴域外)
+            silentGain.gain.value = 0.0001; // ほぼ無音
+            osc.connect(silentGain);
+            silentGain.connect(audioCtx.destination);
+            osc.start();
+            audioCtx.keepAliveOsc = osc; // GC防止
 
             // AudioContextの中断を監視して自動復帰
             watchAudioContextState();
