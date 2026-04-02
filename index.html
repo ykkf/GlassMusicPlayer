@@ -1115,13 +1115,20 @@
                     <span class="material-symbols-rounded">folder_open</span>
                     Music Folder
                 </button>
-                <!-- Web/PWA環境用 フォルダ選択ボタン -->
-                <button class="btn-folder" id="btn-web-folder" style="flex: 1;">
+                <!-- Web/PWA環境用 フォルダ選択ボタン (Android Chrome等) -->
+                <button class="btn-folder" id="btn-web-folder" style="display: none; flex: 1;">
                     <span class="material-symbols-rounded">folder_open</span>
                     Select Folder
                 </button>
+                <!-- iOS/Safari用 ファイル選択ボタン -->
+                <button class="btn-folder" id="btn-ios-files" style="display: none; flex: 1;">
+                    <span class="material-symbols-rounded">library_music</span>
+                    Add Music
+                </button>
                 <!-- webkitdirectoryフォールバック用（非表示） -->
                 <input type="file" id="folder-input-fallback" webkitdirectory directory multiple style="display: none;">
+                <!-- iOS用ファイル選択（カメラを避けるため拡張子指定） -->
+                <input type="file" id="ios-file-input" multiple accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.wma,.webm,.mp4" style="display: none;">
             </div>
             <ul class="playlist" id="playlist">
                 <!-- 曲一覧がJavaScriptで追加されます -->
@@ -1203,12 +1210,16 @@
         
         const btnSelectFolder = document.getElementById('btn-select-folder');
         const btnWebFolder = document.getElementById('btn-web-folder');
+        const btnIosFiles = document.getElementById('btn-ios-files');
         const folderInputFallback = document.getElementById('folder-input-fallback');
+        const iosFileInput = document.getElementById('ios-file-input');
+
+        // iOS検出
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
         if (window.electronAPI) {
             // Electron機能を利用可能な場合、ボタンを表示し代替を隠す
             if (btnSelectFolder) btnSelectFolder.style.display = 'flex';
-            if (btnWebFolder) btnWebFolder.style.display = 'none';
             
             btnMinimize.addEventListener('click', () => window.electronAPI.minimize());
             btnClose.addEventListener('click', () => window.electronAPI.close());
@@ -1358,9 +1369,26 @@
             })).sort((a, b) => a.name.localeCompare(b.name));
         }
 
+        // プラットフォームに応じたボタン表示切り替え
+        if (!window.electronAPI) {
+            if (isIOS) {
+                // iOS: ファイル個別選択ボタンを表示
+                if (btnIosFiles) btnIosFiles.style.display = 'flex';
+                if (btnWebFolder) btnWebFolder.style.display = 'none';
+            } else if ('showDirectoryPicker' in window) {
+                // Android Chrome等: フォルダ選択ボタンを表示
+                if (btnWebFolder) btnWebFolder.style.display = 'flex';
+                if (btnIosFiles) btnIosFiles.style.display = 'none';
+            } else {
+                // その他のブラウザ: ファイル選択ボタンを表示
+                if (btnIosFiles) btnIosFiles.style.display = 'flex';
+                if (btnWebFolder) btnWebFolder.style.display = 'none';
+            }
+        }
+
+        // --- フォルダ選択 (Android Chrome等) ---
         if (btnWebFolder) {
             btnWebFolder.addEventListener('click', async () => {
-                // File System Access API が使えるか確認
                 if ('showDirectoryPicker' in window) {
                     try {
                         const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
@@ -1371,14 +1399,12 @@
                             renderPlaylist();
                             loadTrack(0);
                             setTimeout(() => audio.play().catch(console.error), 100);
-                            // ハンドルをIndexedDBに保存して永続化
                             await saveDirectoryHandle(dirHandle);
                         }
                     } catch (err) {
                         if (err.name !== 'AbortError') console.error('Folder picker error:', err);
                     }
                 } else {
-                    // フォールバック: webkitdirectory を使ったフォルダ選択
                     folderInputFallback.click();
                 }
             });
@@ -1394,6 +1420,38 @@
                     loadTrack(0);
                     setTimeout(() => audio.play().catch(console.error), 100);
                 }
+                e.target.value = '';
+            });
+        }
+
+        // --- iOSファイル選択 ---
+        if (btnIosFiles && iosFileInput) {
+            btnIosFiles.addEventListener('click', () => iosFileInput.click());
+            
+            iosFileInput.addEventListener('change', (e) => {
+                const files = Array.from(e.target.files);
+                if (files.length === 0) return;
+                
+                const newTracks = files.filter(file => {
+                    const lowerName = file.name.toLowerCase();
+                    return AUDIO_EXTENSIONS.some(ext => lowerName.endsWith(ext));
+                }).map(file => ({
+                    name: file.name,
+                    path: URL.createObjectURL(file),
+                    isElectronFile: false,
+                    rawFile: file
+                })).sort((a, b) => a.name.localeCompare(b.name));
+                
+                if (newTracks.length > 0) {
+                    playlistFiles = [...playlistFiles, ...newTracks];
+                    renderPlaylist();
+                    
+                    if (currentTrackIndex === -1) {
+                        loadTrack(0);
+                        setTimeout(() => audio.play().catch(console.error), 100);
+                    }
+                }
+                
                 e.target.value = '';
             });
         }
