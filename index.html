@@ -1330,6 +1330,70 @@
             return tracks;
         }
 
+        /** IndexedDBに実ファイル（Blob）をキャッシュ保存する（Mobile自動復旧用） */
+        function saveFilesToIndexedDB(tracks) {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('GlassMusicPlayerDB', 2);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings');
+                    if (!db.objectStoreNames.contains('cachedFiles')) db.createObjectStore('cachedFiles');
+                };
+                req.onsuccess = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('cachedFiles')) return resolve();
+                    
+                    const tx = db.transaction('cachedFiles', 'readwrite');
+                    tx.objectStore('cachedFiles').clear(); 
+                    for (let i = 0; i < tracks.length; i++) {
+                        tx.objectStore('cachedFiles').put(tracks[i].rawFile, i.toString());
+                    }
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                };
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        /** IndexedDBから実ファイル（Blob）を復旧する（Mobile自動復旧用） */
+        function loadFilesFromIndexedDB() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('GlassMusicPlayerDB', 2);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings');
+                    if (!db.objectStoreNames.contains('cachedFiles')) db.createObjectStore('cachedFiles');
+                };
+                req.onsuccess = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('cachedFiles')) return resolve([]);
+                    
+                    const tx = db.transaction('cachedFiles', 'readonly');
+                    const store = tx.objectStore('cachedFiles');
+                    const reqKeys = store.getAllKeys();
+                    
+                    reqKeys.onsuccess = () => {
+                        const keys = reqKeys.result;
+                        if (!keys || keys.length === 0) return resolve([]);
+                        
+                        const reqValues = store.getAll();
+                        reqValues.onsuccess = () => {
+                            const files = reqValues.result;
+                            const tracks = files.map(file => ({
+                                name: file.name,
+                                path: URL.createObjectURL(file),
+                                isElectronFile: false,
+                                rawFile: file
+                            }));
+                            tracks.sort((a, b) => a.name.localeCompare(b.name));
+                            resolve(tracks);
+                        };
+                    };
+                };
+                req.onerror = () => resolve([]);
+            });
+        }
+
         /** File配列から音楽ファイルのみフィルタリング (webkitdirectoryフォールバック用) */
         function filterAudioFiles(fileList) {
             return Array.from(fileList).filter(file => {
@@ -1378,30 +1442,44 @@
                     renderPlaylist();
                     loadTrack(0);
                     setTimeout(() => audio.play().catch(console.error), 100);
+
+                    // PWA（ブラウザ）環境の場合、次回起動時のために音楽データ自体をキャッシュ保存する
+                    saveFilesToIndexedDB(tracks).catch(err => console.log('File cache error:', err));
                 }
                 e.target.value = '';
             });
         }
 
-        // 起動時に保存済みディレクトリハンドルから自動復元
-        if (!window.electronAPI && 'showDirectoryPicker' in window) {
+        // 起動時にキャッシュから自動復元
+        if (!window.electronAPI) {
             window.addEventListener('load', async () => {
                 try {
-                    const savedHandle = await loadDirectoryHandle();
-                    if (!savedHandle) return;
-                    // ページ読み込み時に自動で権限確認
-                    const perm = await savedHandle.queryPermission({ mode: 'read' });
-                    if (perm === 'granted') {
-                        const tracks = await readAudioFilesFromHandle(savedHandle);
-                        if (tracks.length > 0) {
-                            playlistFiles = tracks;
-                            renderPlaylist();
-                            loadTrack(0);
+                    // 最優先: 実ファイルのキャッシュ（Blob）からの復元を試みる
+                    const cachedTracks = await loadFilesFromIndexedDB();
+                    if (cachedTracks.length > 0) {
+                        playlistFiles = cachedTracks;
+                        renderPlaylist();
+                        loadTrack(0);
+                        return; // キャッシュから復元成功すれば完了
+                    }
+
+                    // キャッシュがない場合、デスクトップPWA等でハンドルがあれば復元
+                    if ('showDirectoryPicker' in window) {
+                        const savedHandle = await loadDirectoryHandle();
+                        if (savedHandle) {
+                            const perm = await savedHandle.queryPermission({ mode: 'read' });
+                            if (perm === 'granted') {
+                                const tracks = await readAudioFilesFromHandle(savedHandle);
+                                if (tracks.length > 0) {
+                                    playlistFiles = tracks;
+                                    renderPlaylist();
+                                    loadTrack(0);
+                                }
+                            }
                         }
                     }
-                    // perm === 'prompt' の場合はユーザーがフォルダボタンを押したときに再取得
                 } catch (e) {
-                    console.log('Auto-load from saved folder skipped:', e);
+                    console.log('Auto-load skipped:', e);
                 }
             });
         }
@@ -1653,6 +1731,16 @@
 
             // 初期状態はソースからDestinationへ直接出力 (ルーティング更新前)
             sourceNode.connect(audioCtx.destination);
+
+            // Web Audio API のバックグラウンド停止を防ぐための無音オシレーター
+            const osc = audioCtx.createOscillator();
+            const silentGain = audioCtx.createGain();
+            osc.frequency.value = 1; // 1Hz (可聴域外)
+            silentGain.gain.value = 0.0001; // ほぼ無音
+            osc.connect(silentGain);
+            silentGain.connect(audioCtx.destination);
+            osc.start();
+            audioCtx.keepAliveOsc = osc; // GC防止
 
             // AudioContextの中断を監視して自動復帰
             watchAudioContextState();

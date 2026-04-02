@@ -1,4 +1,4 @@
-const CACHE_NAME = 'glass-music-player-v1';
+const CACHE_NAME = 'glass-music-player-v4';
 const urlsToCache = [
   './',
   './index.html',
@@ -10,6 +10,7 @@ const urlsToCache = [
 ];
 
 self.addEventListener('install', event => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
@@ -19,7 +20,6 @@ self.addEventListener('install', event => {
 });
 
 self.addEventListener('fetch', event => {
-  // ローカルファイル（file://など）や非HTTPリクエストはスキップ
   if (!event.request.url.startsWith('http')) return;
 
   event.respondWith(
@@ -34,6 +34,7 @@ self.addEventListener('fetch', event => {
 });
 
 self.addEventListener('activate', event => {
+  event.waitUntil(self.clients.claim());
   const cacheWhitelist = [CACHE_NAME];
   event.waitUntil(
     caches.keys().then(cacheNames => {
