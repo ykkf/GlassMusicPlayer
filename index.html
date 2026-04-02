@@ -1115,41 +1115,19 @@
                     <span class="material-symbols-rounded">folder_open</span>
                     Music Folder
                 </button>
-                <!-- Web/PWA環境用 フォルダ選択ボタン (Android Chrome等) -->
-                <button class="btn-folder" id="btn-web-folder" style="display: none; flex: 1;">
+                <!-- Web/PWA環境用 フォルダ選択ボタン -->
+                <button class="btn-folder" id="btn-web-folder" style="flex: 1;">
                     <span class="material-symbols-rounded">folder_open</span>
                     Select Folder
                 </button>
-                <!-- iOS/Safari用 ファイル選択ボタン -->
-                <button class="btn-folder" id="btn-ios-files" style="display: none; flex: 1;">
-                    <span class="material-symbols-rounded">library_music</span>
-                    Add Music
-                </button>
                 <!-- webkitdirectoryフォールバック用（非表示） -->
                 <input type="file" id="folder-input-fallback" webkitdirectory directory multiple style="display: none;">
-                <!-- iOS用ファイル選択（カメラを避けるため拡張子指定） -->
-                <input type="file" id="ios-file-input" multiple accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.wma,.webm,.mp4" style="display: none;">
             </div>
             <ul class="playlist" id="playlist">
                 <!-- 曲一覧がJavaScriptで追加されます -->
             </ul>
         </div>
 
-    </div>
-
-    <!-- フォルダ復元用ダイアログ -->
-    <div id="resume-folder-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; justify-content:center; align-items:center; backdrop-filter:blur(5px);">
-        <div style="background:rgba(30, 35, 50, 0.9); padding:30px; border-radius:16px; text-align:center; border:1px solid rgba(255,255,255,0.1); width: 80%; max-width: 320px; box-shadow:0 10px 40px rgba(0,0,0,0.5);">
-            <div style="margin-bottom: 24px;">
-                <span class="material-symbols-rounded" style="font-size:48px; color:var(--accent);">folder_open</span>
-            </div>
-            <p style="color:var(--text-primary); margin-bottom:10px; font-weight: 500; font-size:16px;">前回のフォルダから再開</p>
-            <p style="color:var(--text-secondary); margin-bottom:24px; font-size:13px; line-height: 1.5;">前回再生していたフォルダがあります。続きから再生しますか？</p>
-            <div style="display:flex; gap:12px; justify-content:center;">
-                <button id="btn-cancel-resume" style="flex:1; padding:12px; border-radius:8px; background:transparent; border:1px solid rgba(255,255,255,0.2); color:var(--text-primary); cursor:pointer;">いいえ</button>
-                <button id="btn-resume-folder" style="flex:1; padding:12px; border-radius:8px; background:rgba(0,229,255,0.2); border:1px solid var(--accent); color:var(--accent); cursor:pointer; font-weight:600;">はい</button>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -1210,16 +1188,12 @@
         
         const btnSelectFolder = document.getElementById('btn-select-folder');
         const btnWebFolder = document.getElementById('btn-web-folder');
-        const btnIosFiles = document.getElementById('btn-ios-files');
         const folderInputFallback = document.getElementById('folder-input-fallback');
-        const iosFileInput = document.getElementById('ios-file-input');
-
-        // iOS検出
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
         if (window.electronAPI) {
             // Electron機能を利用可能な場合、ボタンを表示し代替を隠す
             if (btnSelectFolder) btnSelectFolder.style.display = 'flex';
+            if (btnWebFolder) btnWebFolder.style.display = 'none';
             
             btnMinimize.addEventListener('click', () => window.electronAPI.minimize());
             btnClose.addEventListener('click', () => window.electronAPI.close());
@@ -1369,26 +1343,9 @@
             })).sort((a, b) => a.name.localeCompare(b.name));
         }
 
-        // プラットフォームに応じたボタン表示切り替え
-        if (!window.electronAPI) {
-            if (isIOS) {
-                // iOS: ファイル個別選択ボタンを表示
-                if (btnIosFiles) btnIosFiles.style.display = 'flex';
-                if (btnWebFolder) btnWebFolder.style.display = 'none';
-            } else if ('showDirectoryPicker' in window) {
-                // Android Chrome等: フォルダ選択ボタンを表示
-                if (btnWebFolder) btnWebFolder.style.display = 'flex';
-                if (btnIosFiles) btnIosFiles.style.display = 'none';
-            } else {
-                // その他のブラウザ: ファイル選択ボタンを表示
-                if (btnIosFiles) btnIosFiles.style.display = 'flex';
-                if (btnWebFolder) btnWebFolder.style.display = 'none';
-            }
-        }
-
-        // --- フォルダ選択 (Android Chrome等) ---
         if (btnWebFolder) {
             btnWebFolder.addEventListener('click', async () => {
+                // File System Access API が使えるか確認
                 if ('showDirectoryPicker' in window) {
                     try {
                         const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
@@ -1399,12 +1356,14 @@
                             renderPlaylist();
                             loadTrack(0);
                             setTimeout(() => audio.play().catch(console.error), 100);
+                            // ハンドルをIndexedDBに保存して永続化
                             await saveDirectoryHandle(dirHandle);
                         }
                     } catch (err) {
                         if (err.name !== 'AbortError') console.error('Folder picker error:', err);
                     }
                 } else {
+                    // フォールバック: webkitdirectory を使ったフォルダ選択
                     folderInputFallback.click();
                 }
             });
@@ -1424,44 +1383,8 @@
             });
         }
 
-        // --- iOSファイル選択 ---
-        if (btnIosFiles && iosFileInput) {
-            btnIosFiles.addEventListener('click', () => iosFileInput.click());
-            
-            iosFileInput.addEventListener('change', (e) => {
-                const files = Array.from(e.target.files);
-                if (files.length === 0) return;
-                
-                const newTracks = files.filter(file => {
-                    const lowerName = file.name.toLowerCase();
-                    return AUDIO_EXTENSIONS.some(ext => lowerName.endsWith(ext));
-                }).map(file => ({
-                    name: file.name,
-                    path: URL.createObjectURL(file),
-                    isElectronFile: false,
-                    rawFile: file
-                })).sort((a, b) => a.name.localeCompare(b.name));
-                
-                if (newTracks.length > 0) {
-                    playlistFiles = [...playlistFiles, ...newTracks];
-                    renderPlaylist();
-                    
-                    if (currentTrackIndex === -1) {
-                        loadTrack(0);
-                        setTimeout(() => audio.play().catch(console.error), 100);
-                    }
-                }
-                
-                e.target.value = '';
-            });
-        }
-
         // 起動時に保存済みディレクトリハンドルから自動復元
         if (!window.electronAPI && 'showDirectoryPicker' in window) {
-            const resumeOverlay = document.getElementById('resume-folder-overlay');
-            const btnResumeFolder = document.getElementById('btn-resume-folder');
-            const btnCancelResume = document.getElementById('btn-cancel-resume');
-
             window.addEventListener('load', async () => {
                 try {
                     const savedHandle = await loadDirectoryHandle();
@@ -1475,33 +1398,8 @@
                             renderPlaylist();
                             loadTrack(0);
                         }
-                    } else if (perm === 'prompt') {
-                        // ブラウザの仕様上、次回以降のアクセスにはユーザーアクションが必要
-                        resumeOverlay.style.display = 'flex';
-                        
-                        btnResumeFolder.addEventListener('click', async () => {
-                            try {
-                                const requestPerm = await savedHandle.requestPermission({ mode: 'read' });
-                                if (requestPerm === 'granted') {
-                                    const tracks = await readAudioFilesFromHandle(savedHandle);
-                                    if (tracks.length > 0) {
-                                        playlistFiles = tracks;
-                                        renderPlaylist();
-                                        loadTrack(0);
-                                        // 自動再生を試みる
-                                        setTimeout(() => audio.play().catch(console.error), 100);
-                                    }
-                                }
-                            } catch (err) {
-                                console.error('Resume folder permission error:', err);
-                            }
-                            resumeOverlay.style.display = 'none';
-                        }, { once: true });
-                        
-                        btnCancelResume.addEventListener('click', () => {
-                            resumeOverlay.style.display = 'none';
-                        }, { once: true });
                     }
+                    // perm === 'prompt' の場合はユーザーがフォルダボタンを押したときに再取得
                 } catch (e) {
                     console.log('Auto-load from saved folder skipped:', e);
                 }
@@ -1755,16 +1653,6 @@
 
             // 初期状態はソースからDestinationへ直接出力 (ルーティング更新前)
             sourceNode.connect(audioCtx.destination);
-
-            // Web Audio API のバックグラウンド停止を防ぐための無音オシレーター
-            const osc = audioCtx.createOscillator();
-            const silentGain = audioCtx.createGain();
-            osc.frequency.value = 1; // 1Hz (可聴域外)
-            silentGain.gain.value = 0.0001; // ほぼ無音
-            osc.connect(silentGain);
-            silentGain.connect(audioCtx.destination);
-            osc.start();
-            audioCtx.keepAliveOsc = osc; // GC防止
 
             // AudioContextの中断を監視して自動復帰
             watchAudioContextState();

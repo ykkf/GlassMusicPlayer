@@ -1,4 +1,4 @@
-const CACHE_NAME = 'glass-music-player-v3';
+const CACHE_NAME = 'glass-music-player-v1';
 const urlsToCache = [
   './',
   './index.html',
@@ -10,7 +10,6 @@ const urlsToCache = [
 ];
 
 self.addEventListener('install', event => {
-  self.skipWaiting(); // 強制的に新しいバージョンをアクティブにする
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
@@ -35,7 +34,6 @@ self.addEventListener('fetch', event => {
 });
 
 self.addEventListener('activate', event => {
-  event.waitUntil(self.clients.claim()); // 即座にコントロールを奪う
   const cacheWhitelist = [CACHE_NAME];
   event.waitUntil(
     caches.keys().then(cacheNames => {
